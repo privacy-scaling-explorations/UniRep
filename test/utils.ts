@@ -238,6 +238,22 @@ const genNewUserStateTree = async (deployEnv: string = "contract"): Promise<Spar
     return genNewSMT(_userStateTreeDepth, defaultUserStateLeaf)
 }
 
+const genNewEpochTreeForBenchmark = async (_epochTreeDepth: number): Promise<SparseMerkleTreeImpl> => {
+    const defaultOTSMTHash = SMT_ONE_LEAF
+    return genNewSMT(_epochTreeDepth, defaultOTSMTHash)
+}
+
+const genNewNullifierTreeForBenchmark = async (_nullifierTreeDepth: number): Promise<SparseMerkleTreeImpl> => {
+    const nullifierTree = await genNewSMT(_nullifierTreeDepth, SMT_ZERO_LEAF)
+    // Reserve leaf 0
+    await nullifierTree.update(BigInt(0), SMT_ONE_LEAF)
+    return nullifierTree
+}
+
+const genNewUserStateTreeForBenchmark = async (_userStateTreeDepth: number): Promise<SparseMerkleTreeImpl> => {
+    return genNewSMT(_userStateTreeDepth, defaultUserStateLeaf)
+}
+
 export {
     SMT_ONE_LEAF,
     SMT_ZERO_LEAF,
@@ -252,6 +268,9 @@ export {
     genNewEpochTree,
     genNewNullifierTree,
     genNewUserStateTree,
+    genNewEpochTreeForBenchmark,
+    genNewNullifierTreeForBenchmark,
+    genNewUserStateTreeForBenchmark,
     genNewSMT,
     toCompleteHexString,
 }

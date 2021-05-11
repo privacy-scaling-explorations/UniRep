@@ -5,6 +5,7 @@ cache
 artifacts
 build
 mongodb
+benchmark
 
 #Verifier solidity contracts
 EpochKeyValidityVerifier.sol

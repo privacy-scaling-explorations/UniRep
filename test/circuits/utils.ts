@@ -132,6 +132,114 @@ const genVerifyReputationFromAttesterProofAndPublicSignals = (
     )
 }
 
+const buildProveReputationTestCircuit = async (
+    GSTDepth: any,
+    USTDepth: any,
+    nullifierTreeDepth: any,
+    epochTreeDepth: any,
+    epochKeyNoncePerEpoch: any,
+    attestationNum: any,
+    maxKarmaBudget: any,
+) => {
+    const date = Date.now()
+    
+    // create .circom file
+    const dirPath = path.join(__dirname, '../../circuits/benchmark/')
+    const circomPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.circom')
+    const circuitOut = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.r1cs')
+    const wasmOut = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.wasm')
+    const symOut = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.sym')
+    const paramsOut = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.params')
+    const filePath = 'benchmark/proveReputation_' + date + '.circom'
+    
+    const testCircuit = `include "../proveReputation.circom" \n\ncomponent main = ProveReputation(${GSTDepth}, ${USTDepth}, ${nullifierTreeDepth}, ${epochTreeDepth}, ${epochKeyNoncePerEpoch}, 252, ${attestationNum}, ${maxKarmaBudget})`
+    
+    try{
+        fs.mkdirSync(dirPath, { recursive: true })
+    } catch(e){
+        console.log('Cannot create folder ', e);
+    }
+    fs.writeFileSync(circomPath, testCircuit)
+
+    console.log(`Compiling ${circomPath}...`)
+    // compile .circom file
+    shell.exec(`node ./node_modules/circom/cli.js ${circomPath} -r ${circuitOut} -w ${wasmOut} -s ${symOut}`)
+    console.log('Generated', circuitOut, 'and', wasmOut)
+
+    console.log('Generating params file...')
+    shell.exec(`${zkutilPath} setup -c ${circuitOut} -p ${paramsOut}`)
+
+    return date
+}
+
+const genTestProofAndPublicSignals = async (
+    inputs: any,
+    date: string,
+    compileCircuit = true,
+) => {
+    // create .circom file
+    const dirPath = path.join(__dirname, '../../circuits/benchmark/')
+    const circomPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.circom')
+    const circuitR1csPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.r1cs')
+    const circuitWasmPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.wasm')
+    const symOut = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.sym')
+    const paramsPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.params')
+    const circuitFilename = 'benchmark/proveReputation_' + date + '.circom'
+
+    const inputJsonPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.input.json')
+    const witnessPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.witness.wtns')
+    const witnessJsonPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.witness.json')
+    const proofPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.proof.json')
+    const publicJsonPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.publicSignals.json')
+
+    fs.writeFileSync(inputJsonPath, JSON.stringify(stringifyBigInts(inputs)))
+
+    let circuit
+     if (compileCircuit) {	
+         circuit = await compileAndLoadCircuit(circuitFilename)	
+     }
+
+    const snarkjsCmd = 'node ' + path.join(__dirname, '../../node_modules/snarkjs/build/cli.cjs')
+    const witnessCmd = `${snarkjsCmd} wc ${circuitWasmPath} ${inputJsonPath} ${witnessPath}`
+
+    shell.exec(witnessCmd)
+
+    const witnessJsonCmd = `${snarkjsCmd} wej ${witnessPath} ${witnessJsonPath}`
+    shell.exec(witnessJsonCmd)
+
+    const proveCmd = `${zkutilPath} prove -c ${circuitR1csPath} -p ${paramsPath} -w ${witnessJsonPath} -r ${proofPath} -o ${publicJsonPath}`
+
+    shell.exec(proveCmd)
+
+    const witness = unstringifyBigInts(JSON.parse(fs.readFileSync(witnessJsonPath).toString()))
+    const publicSignals = unstringifyBigInts(JSON.parse(fs.readFileSync(publicJsonPath).toString()))
+    const proof = JSON.parse(fs.readFileSync(proofPath).toString())
+
+    shell.rm('-f', witnessPath)
+    shell.rm('-f', witnessJsonPath)
+    // shell.rm('-f', proofPath)
+    // shell.rm('-f', publicJsonPath)
+    shell.rm('-f', inputJsonPath)
+
+    return { circuit, proof, publicSignals, witness }
+}
+
+const verifyTestProof = async (
+    date: string,
+): Promise<boolean> => {
+    const paramsPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.params')
+    const proofPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.proof.json')
+    const publicSignalsPath = path.join(__dirname, '../../circuits/benchmark/proveReputation_' + date + '.publicSignals.json')
+
+    const verifyCmd = `${zkutilPath} verify -p ${paramsPath} -r ${proofPath} -i ${publicSignalsPath}`
+    const output = shell.exec(verifyCmd).stdout.trim()
+
+    shell.rm('-f', proofPath)
+    shell.rm('-f', publicSignalsPath)
+
+    return output === 'Proof is correct'
+}
+
 const genProofAndPublicSignals = async (
     inputs: any,
     circuitFilename: string,
@@ -322,6 +430,9 @@ export {
     formatProofForVerifierContract,
     getSignalByName,
     getSignalByNameViaSym,
+    buildProveReputationTestCircuit,
+    genTestProofAndPublicSignals,
+    verifyTestProof,
     genVerifyEpochKeyProofAndPublicSignals,
     genVerifyReputationProofAndPublicSignals,
     genVerifyReputationFromAttesterProofAndPublicSignals,
