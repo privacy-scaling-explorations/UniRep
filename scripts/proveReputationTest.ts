@@ -103,7 +103,7 @@ import { Reputation } from "../core"
     const paramsOut = path.join(__dirname, `../circuits/benchmark/${circuitName}_${date}.params`)
 
     // create .circom file
-    testCircuitContent = `include "../proveReputation.circom" \n\ncomponent main = ProveReputation(${GSTDepth}, ${USTDepth}, ${nullifierTreeDepth}, ${epochTreeDepth}, ${epochKeyNoncePerEpoch}, 252, ${attestationNum}, ${maxKarmaBudget})`
+    testCircuitContent = `include "../proveReputation.circom" \n\ncomponent main = ProveReputation(${GSTDepth}, ${nullifierTreeDepth}, ${epochTreeDepth}, ${epochKeyNoncePerEpoch}, 252, ${maxKarmaBudget})`
 
     try{
         fs.mkdirSync(dirPath, { recursive: true })

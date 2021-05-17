@@ -20,6 +20,7 @@ import { genRandomSalt, hash5, hashLeftRight, hashOne, IncrementalQuinTree, Snar
 
 import { Attestation, Reputation } from "../core"
 import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
+import { SparseMerkleTreeImpl } from '../crypto/SMT'
 
 
 (async function() {
@@ -84,6 +85,7 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
     const nullifierTreeDepth = args.nullifier_tree
     const epochKeyNoncePerEpoch = args.epoch_key_per_epoch
     const attestationNum = args.attestation
+    const totalNumAttestations = epochKeyNoncePerEpoch * attestationNum
     const circuitName = "userStateTransition"
     let testCircuitContent
     
@@ -95,7 +97,7 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
     const paramsOut = path.join(__dirname, `../circuits/benchmark/${circuitName}_${date}.params`)
 
     // create .circom file
-    testCircuitContent = `include "../userStateTransition.circom" \n\ncomponent main = UserStateTransition(${GSTDepth}, ${epochTreeDepth}, ${nullifierTreeDepth}, ${USTDepth}, ${attestationNum}, ${epochKeyNoncePerEpoch}, ${attestationNum*epochKeyNoncePerEpoch})`
+    testCircuitContent = `include "../userStateTransition.circom" \n\ncomponent main = UserStateTransition(${GSTDepth}, ${epochTreeDepth}, ${USTDepth}, ${attestationNum}, ${epochKeyNoncePerEpoch}, ${attestationNum*epochKeyNoncePerEpoch})`
 
     try{
         fs.mkdirSync(dirPath, { recursive: true })
@@ -131,31 +133,37 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
     // Generate inputs for test circuit
     // User state
     const epoch = 1
-    const nonce = epochKeyNoncePerEpoch - 1
     const user = genIdentity()
-    const proveKarmaAmount = 3
-    const nonceStarter = 0
-    const epochKeyNonce = 0
-    const epochKey = genEpochKey(user['identityNullifier'], epoch, epochKeyNonce, epochTreeDepth)
-    let minRep = null
-    let reputationRecords = {}
-    const userStateTree = await genNewUserStateTreeForBenchmark(USTDepth)
+    const maxNumAttesters = 2 ** USTDepth
+    const expectedNumAttestationsMade = Math.floor(maxNumAttesters / 2)
+    let GSTZERO_VALUE = 0, GSTree: IncrementalQuinTree, GSTreeRoot, GSTreeProof, newGSTLeaf
+    let epochTree: SparseMerkleTreeImpl, epochTreeRoot, epochTreePathElements: any[]
+    let userStateTree: SparseMerkleTreeImpl
     let intermediateUserStateTreeRoots, userStateLeafPathElements
     let oldPosReps, oldNegReps, oldGraffities
+
+    let reputationRecords = {}
     let attesterIds: BigInt[], posReps: BigInt[], negReps: BigInt[], graffities: SnarkBigInt[], overwriteGraffitis: boolean[]
     let selectors: number[] = []
     let nullifiers: BigInt[]
     let hashChainResults: BigInt[] = []
+    let hashedLeaf
+    const transitionedPosRep = 20
+    const transitionedNegRep = 0
     let currentEpochPosRep = 0
     let currentEpochNegRep = 0
-    const maxNumAttesters = 2 ** USTDepth
-    const expectedNumAttestationsMade = Math.floor(maxNumAttesters / 2)
 
+    // Epoch tree
+    epochTree = await genNewEpochTreeForBenchmark(epochTreeDepth)
+
+    // User state tree
+    userStateTree = await genNewUserStateTreeForBenchmark(USTDepth)
     intermediateUserStateTreeRoots = []
     userStateLeafPathElements = []
     oldPosReps = []
     oldNegReps = []
     oldGraffities = []
+
     // Bootstrap user state
     for (let i = 1; i < maxNumAttesters; i++) {
         const  attesterId = BigInt(i)
@@ -170,35 +178,28 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
     }
     intermediateUserStateTreeRoots.push(userStateTree.getRootHash())
 
-    const userStateRoot = userStateTree.getRootHash()
-    
     // Global state tree
-    let GSTZERO_VALUE = 0
-    const transitionedPosRep = 5
-    const transitionedNegRep = 0
-    const GSTree = new IncrementalQuinTree(GSTDepth, GSTZERO_VALUE, 2)
+    GSTree = new IncrementalQuinTree(GSTDepth, GSTZERO_VALUE, 2)
     const commitment = genIdentityCommitment(user)
-    const hashedLeaf = hash5([
+    hashedLeaf = hash5([
         commitment, 
-        userStateRoot,
+        userStateTree.getRootHash(),
         BigInt(transitionedPosRep),
         BigInt(transitionedNegRep),
         BigInt(0)
     ])
-    
     GSTree.insert(hashedLeaf)
-    const GSTreeProof = GSTree.genMerklePath(0)
-    const GSTreeRoot = GSTree.root
+    GSTreeProof = GSTree.genMerklePath(0)
+    GSTreeRoot = GSTree.root
 
     attesterIds = []
     posReps = []
     negReps = []
     graffities = []
     overwriteGraffitis = []
-    const TOTAL_NUM_ATTESTATIONS = epochKeyNoncePerEpoch * attestationNum
 
     let numAttestationsMade = 0
-    for (let i = 0; i < TOTAL_NUM_ATTESTATIONS; i++) {
+    for (let i = 0; i < totalNumAttestations; i++) {
         if (numAttestationsMade < expectedNumAttestationsMade) {
             const s = Math.floor(Math.random() * 2)
             selectors.push(s)
@@ -208,15 +209,17 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
         }
     }
 
-    // Epoch tree
-    const epochTree = await genNewEpochTreeForBenchmark(epochTreeDepth)
-    
     // Begin generating and processing attestations
     nullifiers = []
-    let epochTreePathElements: any[] = []
+    epochTreePathElements = []
     let hashChainResult: BigInt
     const attesterToNonceMap = {}
     let startIndex
+    // generate an attester id list
+    const attesterIdList: BigInt[] = []
+    for(let i = 1; i <= attestationNum; i++) {
+        attesterIdList.push(BigInt(i))
+    }
     for (let nonce = 0; nonce < epochKeyNoncePerEpoch; nonce++) {
         startIndex = nonce * attestationNum
         attesterToNonceMap[nonce] = []
@@ -226,11 +229,7 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
         const epochKey = genEpochKey(user['identityNullifier'], epoch, nonce, epochTreeDepth)
         for (let i = 0; i < attestationNum; i++) {
             // attesterId ranges from 1 to (maxNumAttesters - 1)
-            let attesterId = BigInt(1 + Math.floor(Math.random() * (maxNumAttesters - 1)))
-            // re-sample attesterId if it is already in the list
-            while (attesterToNonceMap[nonce].indexOf(attesterId) >= 0) {
-                attesterId = BigInt(1 + Math.floor(Math.random() * (maxNumAttesters - 1)))
-            }
+            let attesterId = attesterIdList[i]
             const attestation: Attestation = new Attestation(
                 attesterId,
                 BigInt(Math.floor(Math.random() * 100)),
@@ -265,11 +264,14 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
                 userStateLeafPathElements.push(oldReputationRecordProof)
 
                 // Update attestation record
-                reputationRecords[attesterId.toString()]['posRep'] = attestation['posRep']
-                reputationRecords[attesterId.toString()]['negRep'] = attestation['negRep']
+                reputationRecords[attesterId.toString()].update(
+                    attestation['posRep'],
+                    attestation['negRep'],
+                    attestation['graffiti'],
+                    attestation['overwriteGraffiti']
+                )
                 currentEpochPosRep += Number(attestation['posRep'])
                 currentEpochNegRep += Number(attestation['negRep'])
-                if (attestation['overwriteGraffiti']) reputationRecords[attesterId.toString()]['graffiti'] = attestation['graffiti']
                 await userStateTree.update(BigInt(attesterId), reputationRecords[attesterId.toString()].hash())
 
                 const attestation_hash = attestation.hash()
@@ -302,8 +304,8 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
     }
 
     // Compute new GST Leaf
-    const latestUSTRoot = intermediateUserStateTreeRoots[TOTAL_NUM_ATTESTATIONS]
-    const newGSTLeaf = hash5([
+    const latestUSTRoot = intermediateUserStateTreeRoots[totalNumAttestations]
+    newGSTLeaf = hash5([
         commitment,
         latestUSTRoot,
         BigInt(transitionedPosRep + currentEpochPosRep + DEFAULT_AIRDROPPED_KARMA),
@@ -316,7 +318,7 @@ import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
         // Get epoch tree root and merkle proof for this epoch key
         epochTreePathElements.push(await epochTree.getMerkleProof(epochKey))
     }
-    const epochTreeRoot = epochTree.getRootHash()
+    epochTreeRoot = epochTree.getRootHash()
 
     const circuitInputs = {
         epoch: epoch,
