@@ -27,4 +27,22 @@ Integration test
 npm run test
 ```
 
-To see how to use Unirep with [mongodb](https://www.mongodb.com/), refer to branch [database](https://github.com/vivianjeng/UniRep/tree/database)
+## Benchmark test
+```
+npm run benchmark
+```
+to run benchmark [scripts](https://github.com/vivianjeng/UniRep/blob/benchmark/scripts/ZKProofBenchmark.sh)
+
+```
+npx ts-node scripts/ZKProofBenchmark.ts -gst 4 -ust 4 -ept 4 -nt 128 -epk 4 -a 6 -k 10
+```
+to run a single benchmark test. where 
+- `-gst`: global state tree depth
+- `-ust`: user state tree depth
+- `ept`: epoch tree depth
+- `nt`: nullifier tree depth
+- `epk`: number of epoch key nonce per epoch
+- `a`: attestations per epoch key
+- `k`: reputation budget that a user can spend per epoch
+
+Benchmark results can refer to [this sheet](https://docs.google.com/spreadsheets/d/1X7IZnTtKii-eNQ6TGMJ5M7CNSVSDLq_2ebJ5MtcpZMk/edit?usp=sharing)
