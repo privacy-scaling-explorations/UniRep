@@ -1,24 +1,5 @@
 import * as argparse from 'argparse' 
-import * as fs from 'fs'
-import * as path from 'path'
 import * as shell from 'shelljs'
-import { genIdentity, genIdentityCommitment } from 'libsemaphore'
-
-import { genSnarkVerifierSol } from './genVerifier'
-import {
-    buildProveReputationTestCircuit,
-    compileAndLoadCircuit,
-    executeCircuit,
-    genTestProofAndPublicSignals,
-    genVerifyReputationProofAndPublicSignals,
-    verifyProveReputationProof,
-    verifyTestProof,
-} from '../test/circuits/utils'
-
-import { genEpochKey, genEpochKeyNullifier, genNewEpochTreeForBenchmark, genNewNullifierTree, genNewNullifierTreeForBenchmark, genNewUserStateTree, genNewUserStateTreeForBenchmark, SMT_ONE_LEAF } from '../test/utils'
-import { genRandomSalt, hash5, hashOne, IncrementalQuinTree, stringifyBigInts, unstringifyBigInts } from 'maci-crypto'
-
-import { Reputation } from "../core"
 
 const exec = (command: string) => {
     return shell.exec(command, { silent: true })
@@ -26,7 +7,6 @@ const exec = (command: string) => {
 
 
 (async function() {
-    const zkutilPath = "~/.cargo/bin/zkutil"
     const parser = new argparse.ArgumentParser({ 
         description: 'Compile a circom circuit and generate its proving key, verification key, and Solidity verifier'
     })

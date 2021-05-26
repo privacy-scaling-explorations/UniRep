@@ -4,21 +4,8 @@ import * as path from 'path'
 import * as shell from 'shelljs'
 import { genIdentity, genIdentityCommitment } from 'libsemaphore'
 
-import { genSnarkVerifierSol } from './genVerifier'
-import {
-    buildProveReputationTestCircuit,
-    compileAndLoadCircuit,
-    executeCircuit,
-    genTestProofAndPublicSignals,
-    genVerifyReputationProofAndPublicSignals,
-    verifyProveReputationProof,
-    verifyTestProof,
-} from '../test/circuits/utils'
-
-import { genEpochKey, genEpochKeyNullifier, genNewEpochTreeForBenchmark, genNewNullifierTree, genNewNullifierTreeForBenchmark, genNewUserStateTree, genNewUserStateTreeForBenchmark, SMT_ONE_LEAF } from '../test/utils'
-import { genRandomSalt, hash5, hashOne, IncrementalQuinTree, stringifyBigInts, unstringifyBigInts } from 'maci-crypto'
-
-import { Reputation } from "../core"
+import { genEpochKey} from '../test/utils'
+import { genRandomSalt, hash5, IncrementalQuinTree, stringifyBigInts } from 'maci-crypto'
 
 
 (async function() {

@@ -4,19 +4,8 @@ import * as path from 'path'
 import * as shell from 'shelljs'
 import { genIdentity, genIdentityCommitment } from 'libsemaphore'
 
-import { genSnarkVerifierSol } from './genVerifier'
-import {
-    buildProveReputationTestCircuit,
-    compileAndLoadCircuit,
-    executeCircuit,
-    genTestProofAndPublicSignals,
-    genVerifyReputationProofAndPublicSignals,
-    verifyProveReputationProof,
-    verifyTestProof,
-} from '../test/circuits/utils'
-
-import { genEpochKey, genEpochKeyNullifier, genNewEpochTreeForBenchmark, genNewNullifierTree, genNewNullifierTreeForBenchmark, genNewUserStateTree, genNewUserStateTreeForBenchmark, SMT_ONE_LEAF } from '../test/utils'
-import { genRandomSalt, hash5, hashOne, IncrementalQuinTree, stringifyBigInts, unstringifyBigInts } from 'maci-crypto'
+import { genEpochKeyNullifier, genNewNullifierTreeForBenchmark, genNewUserStateTreeForBenchmark } from '../test/utils'
+import { genRandomSalt, hash5, hashOne, IncrementalQuinTree, stringifyBigInts } from 'maci-crypto'
 
 import { Reputation } from "../core"
 
@@ -27,7 +16,7 @@ import { Reputation } from "../core"
         description: 'Compile a circom circuit and generate its proving key, verification key, and Solidity verifier'
     })
 
-    parser.addArgument(
+    parser.add_argument(
         ['-gst', '--global-state-tree'],
         {
             help: 'The depth of global state tree',
@@ -35,7 +24,7 @@ import { Reputation } from "../core"
         }
     )
 
-    parser.addArgument(
+    parser.add_argument(
         ['-ust', '--user-state-tree'],
         {
             help: 'The depth of user state tree',
@@ -43,7 +32,7 @@ import { Reputation } from "../core"
         }
     )
 
-    parser.addArgument(
+    parser.add_argument(
         ['-nt', '--nullifier-tree'],
         {
             help: 'The depth of nullifier tree',
@@ -51,7 +40,7 @@ import { Reputation } from "../core"
         }
     )
 
-    parser.addArgument(
+    parser.add_argument(
         ['-epk', '--epoch-key-per-epoch'],
         {
             help: 'The number of epoch keys the user can have per epoch',

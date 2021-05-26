@@ -4,19 +4,8 @@ import * as path from 'path'
 import * as shell from 'shelljs'
 import { genIdentity, genIdentityCommitment } from 'libsemaphore'
 
-import { genSnarkVerifierSol } from './genVerifier'
-import {
-    buildProveReputationTestCircuit,
-    compileAndLoadCircuit,
-    executeCircuit,
-    genTestProofAndPublicSignals,
-    genVerifyReputationProofAndPublicSignals,
-    verifyProveReputationProof,
-    verifyTestProof,
-} from '../test/circuits/utils'
-
-import { genAttestationNullifier, genEpochKey, genEpochKeyNullifier, genNewEpochTreeForBenchmark, genNewNullifierTree, genNewNullifierTreeForBenchmark, genNewUserStateTree, genNewUserStateTreeForBenchmark, SMT_ONE_LEAF } from '../test/utils'
-import { genRandomSalt, hash5, hashLeftRight, hashOne, IncrementalQuinTree, SnarkBigInt, stringifyBigInts, unstringifyBigInts } from 'maci-crypto'
+import { genAttestationNullifier, genEpochKey, genNewEpochTreeForBenchmark, genNewUserStateTreeForBenchmark } from '../test/utils'
+import { genRandomSalt, hash5, hashLeftRight, IncrementalQuinTree, SnarkBigInt, stringifyBigInts } from 'maci-crypto'
 
 import { Attestation, Reputation } from "../core"
 import { DEFAULT_AIRDROPPED_KARMA } from '../config/socialMedia'
