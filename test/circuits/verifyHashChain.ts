@@ -1,19 +1,10 @@
-import chai from "chai"
+import * as path from 'path'
+import { expect } from "chai"
+import { genRandomSalt, hashLeftRight, SnarkBigInt, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, } from "../../circuits/utils"
 
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-} from '../../circuits/utils'
-
-import {
-    genRandomSalt,
-    hashLeftRight,
-    SnarkBigInt,
-} from 'maci-crypto'
-
-describe('Hash chain circuit', () => {
+describe('Hash chain circuit', function () {
+    this.timeout(30000)
     let circuit
 
     const NUM_ELEMENT = 10
@@ -21,7 +12,8 @@ describe('Hash chain circuit', () => {
     let cur: BigInt = BigInt(0), result, selectors: number[] = []
 
     before(async () => {
-        circuit = await compileAndLoadCircuit('test/verifyHashChain_test.circom')
+        const circuitPath = path.join(__dirname, '../../circuits/test/verifyHashChain_test.circom')
+        circuit = await compileAndLoadCircuit(circuitPath)
 
         for (let i = 0; i < NUM_ELEMENT; i++) {
             const element = genRandomSalt()

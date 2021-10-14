@@ -1,15 +1,12 @@
 import { ethers as hardhatEthers } from 'hardhat'
 import { BigNumber, ethers } from 'ethers'
-import chai from "chai"
-import { attestingFee, epochLength, epochTreeDepth, globalStateTreeDepth, numEpochKeyNoncePerEpoch, nullifierTreeDepth, userStateTreeDepth} from '../../config/testLocal'
-import { genIdentity, genIdentityCommitment } from 'libsemaphore'
-import { IncrementalQuinTree } from 'maci-crypto'
-import { deployUnirep, getTreeDepthsForTesting } from '../../core/utils'
+import { expect } from 'chai'
+import { IncrementalQuinTree, genIdentity, genIdentityCommitment } from '../../crypto'
+import { deployUnirep, getUnirepContract } from '../../core'
+
+import { attestingFee, epochLength, epochTreeDepth, globalStateTreeDepth, numEpochKeyNoncePerEpoch, userStateTreeDepth, maxReputationBudget} from '../../config/testLocal'
+import { getTreeDepthsForTesting } from '../../core/utils'
 import { genNewUserStateTree } from '../utils'
-
-const { expect } = chai
-
-import Unirep from "../../artifacts/contracts/Unirep.sol/Unirep.json"
 
 
 describe('Signup', () => {
@@ -27,7 +24,9 @@ describe('Signup', () => {
         // Set maxUsers to testMaxUser
         const _settings = {
             maxUsers: testMaxUser,
+            maxAttesters: testMaxUser,
             numEpochKeyNoncePerEpoch: numEpochKeyNoncePerEpoch,
+            maxReputationBudget: maxReputationBudget,
             epochLength: epochLength,
             attestingFee: attestingFee
         }
@@ -50,12 +49,11 @@ describe('Signup', () => {
         const treeDepths_ = await unirepContract.treeDepths()
         expect(epochTreeDepth).equal(treeDepths_.epochTreeDepth)
         expect(globalStateTreeDepth).equal(treeDepths_.globalStateTreeDepth)
-        expect(nullifierTreeDepth).equal(treeDepths_.nullifierTreeDepth)
         expect(userStateTreeDepth).equal(treeDepths_.userStateTreeDepth)
     })
 
     it('should have the correct default value', async () => {
-        const emptyUSTree = await genNewUserStateTree()
+        const emptyUSTree = await genNewUserStateTree("contract")
         emptyUserStateRoot = await unirepContract.emptyUserStateRoot()
         expect(BigNumber.from(emptyUSTree.getRootHash())).equal(emptyUserStateRoot)
 
@@ -94,7 +92,7 @@ describe('Signup', () => {
                 expect(receipt.status).equal(1)
             }
             await expect(unirepContract.userSignUp(genIdentityCommitment(genIdentity())))
-                .to.be.revertedWith('Unirep: maximum number of signups reached')
+                .to.be.revertedWith('Unirep: maximum number of user signups reached')
         })
     })
 
@@ -109,7 +107,7 @@ describe('Signup', () => {
         it('sign up should succeed', async () => {
             attester = accounts[1]
             attesterAddress = await attester.getAddress()
-            unirepContractCalledByAttester = await hardhatEthers.getContractAt(Unirep.abi, unirepContract.address, attester)
+            unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
             const tx = await unirepContractCalledByAttester.attesterSignUp()
             const receipt = await tx.wait()
 
@@ -153,6 +151,23 @@ describe('Signup', () => {
 
             await expect(unirepContract.attesterSignUpViaRelayer(attester2Address, attester2Sig))
                 .to.be.revertedWith('Unirep: attester has already signed up')
+        })
+
+        it('sign up should fail if max capacity reached', async () => {
+            for (let i = 3; i < testMaxUser; i++) {
+                attester = accounts[i]
+                attesterAddress = await attester.getAddress()
+                unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+                const tx = await unirepContractCalledByAttester.attesterSignUp()
+                const receipt = await tx.wait()
+
+                expect(receipt.status).equal(1)
+            }
+            attester = accounts[5]
+            attesterAddress = await attester.getAddress()
+            unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+            await expect(unirepContractCalledByAttester.attesterSignUp())
+                .to.be.revertedWith('Unirep: maximum number of attester signups reached')
         })
     })
 })

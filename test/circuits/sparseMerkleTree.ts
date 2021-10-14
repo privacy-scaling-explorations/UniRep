@@ -1,22 +1,10 @@
-import chai from "chai"
-
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-    getSignalByName,
-} from '../../circuits/utils'
-
-import {
-    genRandomSalt,
-    hashOne,
-} from 'maci-crypto'
+import * as path from 'path'
+import { expect } from "chai"
+import { genRandomSalt, hashOne, SparseMerkleTreeImpl, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, getSignalByName, } from "../../circuits/utils"
 import { genNewSMT } from "../utils"
-// import { circuitEpochTreeDepth } from "../../config/testLocal"
 // circuitEpochTreeDepth too large will greatly slow down the test...
 const circuitEpochTreeDepth = 8
-import { SparseMerkleTreeImpl } from "../../crypto/SMT"
 
 describe('Sparse Merkle Tree circuits', function () {
     this.timeout(500000)
@@ -28,7 +16,8 @@ describe('Sparse Merkle Tree circuits', function () {
         let leafIndicesToInsert: number[], emptyLeafIndices: number[]
 
         before(async () => {
-            circuit = await compileAndLoadCircuit('test/smtLeafExists_test.circom')
+            const circuitPath = path.join(__dirname, '../../circuits/test/smtLeafExists_test.circom')
+            circuit = await compileAndLoadCircuit(circuitPath)
 
             const defaultLeafHash = hashOne(BigInt(0))
             tree = await genNewSMT(circuitEpochTreeDepth, defaultLeafHash)
@@ -157,7 +146,8 @@ describe('Sparse Merkle Tree circuits', function () {
         let circuit
 
         before(async () => {
-            circuit = await compileAndLoadCircuit('test/smtInclusionProof_test.circom')
+            const circuitPath = path.join(__dirname, '../../circuits/test/smtInclusionProof_test.circom')
+            circuit = await compileAndLoadCircuit(circuitPath)
         })
 
         it('Valid update proofs should work', async () => {

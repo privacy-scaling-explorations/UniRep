@@ -33,9 +33,29 @@ import {
 } from './verifyEpochKeyProof'
 
 import {
+    setAirdropAmount,
+    configureSubparser as configureSubparserForSetAirdropAmount,
+} from './setAirdropAmount'
+
+import {
     attest,
     configureSubparser as configureSubparserForAttest,
 } from './attest'
+
+import {
+    giveAirdrop,
+    configureSubparser as configureSubparserForGiveAirdrop,
+} from './giveAirdrop'
+
+import {
+    spendReputation,
+    configureSubparser as configureSubparserForSpendReputation,
+} from './spendReputation'
+
+import {
+    submitEpochKeyProof,
+    configureSubparser as configureSubparserForSubmitEpochKeyProof
+} from './submitEpochKeyProof'
 
 import {
     epochTransition,
@@ -56,6 +76,17 @@ import {
     verifyReputationProof,
     configureSubparser as configureSubparserForVerifyReputationProof,
 } from './verifyReputationProof'
+
+import {
+    genUserSignUpProof,
+    configureSubparser as configureSubparserForGenUserSignUpProof,
+} from './genUserSignUpProof'
+
+import {
+    verifyUserSignUpProof,
+    configureSubparser as configureSubparserForVerifyUserSignUpProof,
+} from './verifyUserSignUpProof'
+
 
 
 const main = async () => {
@@ -86,8 +117,20 @@ const main = async () => {
     // Subcommand: verifyEpochKeyProof
     configureSubparserForVerifyEpochKeyProof(subparsers)
 
+    // Subcommand: setAirdropAmount
+    configureSubparserForSetAirdropAmount(subparsers)
+
     // Subcommand: attest
     configureSubparserForAttest(subparsers)
+
+    // Subcommand: giveAirdrop
+    configureSubparserForGiveAirdrop(subparsers)
+
+    // Subcommand: spendReputation
+    configureSubparserForSpendReputation(subparsers)
+
+    // Subcommand: submitEpochKeyProof
+    configureSubparserForSubmitEpochKeyProof(subparsers)
 
     // Subcommand: epochTransition
     configureSubparserForEpochTransition(subparsers)
@@ -100,6 +143,12 @@ const main = async () => {
 
     // Subcommand: verifyReputationProof
     configureSubparserForVerifyReputationProof(subparsers)
+
+    // Subcommand: genUserSignUpProof
+    configureSubparserForGenUserSignUpProof(subparsers)
+
+    // Subcommand: verifyUserSignUpProof
+    configureSubparserForVerifyUserSignUpProof(subparsers)
 
     const args = parser.parse_args()
 
@@ -116,8 +165,16 @@ const main = async () => {
         await genEpochKeyAndProof(args)
     } else if (args.subcommand === 'verifyEpochKeyProof') {
         await verifyEpochKeyProof(args)
+    } else if (args.subcommand === 'setAirdropAmount') {
+        await setAirdropAmount(args)
     } else if (args.subcommand === 'attest') {
         await attest(args)
+    } else if (args.subcommand === 'giveAirdrop') {
+        await giveAirdrop(args)
+    } else if (args.subcommand === 'spendReputation') {
+        await spendReputation(args)
+    } else if (args.subcommand === 'submitEpochKeyProof') {
+        await submitEpochKeyProof(args)
     } else if (args.subcommand === 'epochTransition') {
         await epochTransition(args)
     } else if (args.subcommand === 'userStateTransition') {
@@ -126,6 +183,10 @@ const main = async () => {
         await genReputationProof(args)
     } else if (args.subcommand === 'verifyReputationProof') {
         await verifyReputationProof(args)
+    } else if (args.subcommand === 'genUserSignUpProof') {
+        await genUserSignUpProof(args)
+    } else if (args.subcommand === 'verifyUserSignUpProof') {
+        await verifyUserSignUpProof(args)
     }
 }
 

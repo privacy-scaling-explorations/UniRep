@@ -1,15 +1,15 @@
 import base64url from 'base64url'
 import { ethers } from 'ethers'
 
-import { genIdentityCommitment, unSerialiseIdentity } from '../crypto'
+import { genIdentityCommitment, unSerialiseIdentity, add0x } from '../crypto'
 import { formatProofForVerifierContract, verifyProof } from '../circuits/utils'
 import { DEFAULT_ETH_PROVIDER, DEFAULT_START_BLOCK } from './defaults'
-import { genUserStateFromContract, genEpochKey, UnirepContract } from '../core'
-import { epkProofPrefix, epkPublicSignalsPrefix, identityPrefix } from './prefix'
+import { genUserStateFromContract } from '../core'
+import { identityPrefix, signUpProofPrefix, signUpPublicSignalsPrefix } from './prefix'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
-        'genEpochKeyAndProof',
+        'genUserSignUpProof',
         { add_help: true },
     )
 
@@ -32,11 +32,11 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
-        '-n', '--epoch-key-nonce',
+        '-a', '--attester-id',
         {
             required: true,
-            type: 'int',
-            help: 'The epoch key nonce',
+            type: 'str',
+            help: 'The attester id (in hex representation)',
         }
     )
 
@@ -59,35 +59,20 @@ const configureSubparser = (subparsers: any) => {
     )
 }
 
-const genEpochKeyAndProof = async (args: any) => {
+const genUserSignUpProof = async (args: any) => {
+
     // Ethereum provider
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
     const provider = new ethers.providers.JsonRpcProvider(ethProvider)
-
-    // Unirep contract
-    const unirepContract = new UnirepContract(args.contract, ethProvider)
     
     const startBlock = (args.start_block) ? args.start_block : DEFAULT_START_BLOCK
 
-    // Validate epoch key nonce
-    const epkNonce = args.epoch_key_nonce
-    const numEpochKeyNoncePerEpoch = await unirepContract.numEpochKeyNoncePerEpoch()
-    if (epkNonce >= numEpochKeyNoncePerEpoch) {
-        console.error('Error: epoch key nonce must be less than max epoch key nonce')
-        return
-    }
-
-    // Gen epoch key
     const encodedIdentity = args.identity.slice(identityPrefix.length)
     const decodedIdentity = base64url.decode(encodedIdentity)
     const id = unSerialiseIdentity(decodedIdentity)
     const commitment = genIdentityCommitment(id)
-    const currentEpoch = await unirepContract.currentEpoch()
-    const treeDepths = await unirepContract.treeDepths()
-    const epochTreeDepth = treeDepths.epochTreeDepth
-    const epk = genEpochKey(id.identityNullifier, currentEpoch, epkNonce, epochTreeDepth).toString()
 
-    // Gen epoch key proof
+    // Gen user sign up proof
     const userState = await genUserStateFromContract(
         provider,
         args.contract,
@@ -95,25 +80,27 @@ const genEpochKeyAndProof = async (args: any) => {
         id,
         commitment,
     )
-    const results = await userState.genVerifyEpochKeyProof(epkNonce)
+    const attesterId = BigInt(add0x(args.attester_id))
+    const results = await userState.genUserSignUpProof(attesterId)
 
     // TODO: Not sure if this validation is necessary
-    const isValid = await verifyProof('verifyEpochKey', results.proof, results.publicSignals)
+    const isValid = await verifyProof('proveUserSignUp',results.proof, results.publicSignals)
     if(!isValid) {
-        console.error('Error: epoch key proof generated is not valid!')
+        console.error('Error: user sign up proof generated is not valid!')
         return
     }
-
+    
     const formattedProof = formatProofForVerifierContract(results.proof)
     const encodedProof = base64url.encode(JSON.stringify(formattedProof))
     const encodedPublicSignals = base64url.encode(JSON.stringify(results.publicSignals))
-    console.log(`Epoch key of epoch ${currentEpoch} and nonce ${epkNonce}: ${epk}`)
-    console.log(epkProofPrefix + encodedProof)
-    console.log(epkPublicSignalsPrefix + encodedPublicSignals)
+    console.log(`Proof of user sign up from attester ${results.attesterId}:`)
+    console.log(`Epoch key of the user: ${BigInt(results.epochKey).toString()}`)
+    console.log(signUpProofPrefix + encodedProof)
+    console.log(signUpPublicSignalsPrefix + encodedPublicSignals)
     process.exit(0)
 }
 
 export {
-    genEpochKeyAndProof,
+    genUserSignUpProof,
     configureSubparser,
 }

@@ -1,26 +1,10 @@
-import chai from "chai"
-
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-} from '../../circuits/utils'
-import { genNewNullifierTree, genNewUserStateTree, SMT_ONE_LEAF } from '../utils'
-import { genEpochKeyNullifier } from '../../core/utils'
-
-import {
-    IncrementalQuinTree,
-    genRandomSalt,
-    hashOne,
-    stringifyBigInts,
-    hashLeftRight,
-} from 'maci-crypto'
-import { genIdentity, genIdentityCommitment } from 'libsemaphore'
-import { SparseMerkleTreeImpl } from "../../crypto/SMT"
-import { circuitGlobalStateTreeDepth, circuitNullifierTreeDepth, circuitUserStateTreeDepth } from "../../config/testLocal"
-import { Reputation } from "../../core"
-import { genProofAndPublicSignals, verifyProof } from "../../circuits/utils"
+import * as path from 'path'
+import { expect } from "chai"
+import { genRandomSalt, hashLeftRight, genIdentity, genIdentityCommitment, SparseMerkleTreeImpl, stringifyBigInts, IncrementalQuinTree, hashOne, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, genProofAndPublicSignals, verifyProof } from "../../circuits/utils"
+import { genEpochKey, Reputation } from "../../core"
+import { circuitEpochTreeDepth, circuitGlobalStateTreeDepth, circuitUserStateTreeDepth, maxReputationBudget } from "../../config/testLocal"
+import { genNewUserStateTree } from "../utils"
 
 describe('Prove reputation from attester circuit', function () {
     this.timeout(300000)
@@ -30,26 +14,33 @@ describe('Prove reputation from attester circuit', function () {
     const epoch = 1
     const nonce = 1
     const user = genIdentity()
+    const epochKey = genEpochKey(user['identityNullifier'], epoch, nonce, circuitEpochTreeDepth)
     const NUM_ATTESTERS = 10
 
     let GSTZERO_VALUE = 0, GSTree, GSTreeRoot, GSTreeProof
     let userStateTree: SparseMerkleTreeImpl, userStateRoot
-    let nullifierTree: SparseMerkleTreeImpl, nullifierTreeRoot, epkNullifierProof
-    let epkNullifier
     let hashedLeaf
 
     let reputationRecords = {}
-    const MIN_POS_REP = 10
+    const MIN_POS_REP = 20
     const MAX_NEG_REP = 10
+    const repNullifiersAmount = 3
+    const nonceStarter = 0
+    const selectors: BigInt[] = []
+    const nonceList: BigInt[] = []
+    let minRep = MIN_POS_REP - MAX_NEG_REP
+    const prove_graffiti = 1
+    const signUp = 1
 
     before(async () => {
         const startCompileTime = Math.floor(new Date().getTime() / 1000)
-        circuit = await compileAndLoadCircuit('test/proveReputation_test.circom')
+        const circuitPath = path.join(__dirname, '../../circuits/test/proveReputation_test.circom')
+        circuit = await compileAndLoadCircuit(circuitPath)
         const endCompileTime = Math.floor(new Date().getTime() / 1000)
         console.log(`Compile time: ${endCompileTime - startCompileTime} seconds`)
 
         // User state
-        userStateTree = await genNewUserStateTree("circuit")
+        userStateTree = await genNewUserStateTree()
 
         // Bootstrap user state
         for (let i = 0; i < NUM_ATTESTERS; i++) {
@@ -60,6 +51,7 @@ describe('Prove reputation from attester circuit', function () {
                 BigInt(Math.floor(Math.random() * 100) + MIN_POS_REP),
                 BigInt(Math.floor(Math.random() * MAX_NEG_REP)),
                 hashOne(graffitiPreImage),
+                BigInt(signUp)
             )
             reputationRecords[attesterId].addGraffitiPreImage(graffitiPreImage)
             await userStateTree.update(BigInt(attesterId), reputationRecords[attesterId].hash())
@@ -74,12 +66,15 @@ describe('Prove reputation from attester circuit', function () {
         GSTreeProof = GSTree.genMerklePath(0)
         GSTreeRoot = GSTree.root
 
-        // Nullifier tree
-        nullifierTree = await genNewNullifierTree("circuit")
-        nullifierTreeRoot = nullifierTree.getRootHash()
-
-        epkNullifier = genEpochKeyNullifier(user['identityNullifier'], epoch, nonce, circuitNullifierTreeDepth)
-        epkNullifierProof = await nullifierTree.getMerkleProof(epkNullifier)
+        // selectors and karma nonce
+        for (let i = 0; i < repNullifiersAmount; i++) {
+            nonceList.push( BigInt(nonceStarter + i) )
+            selectors.push(BigInt(1));
+        }
+        for (let i = repNullifiersAmount ; i < maxReputationBudget; i++) {
+            nonceList.push(BigInt(0))
+            selectors.push(BigInt(0))
+        }
     })
 
     it('successfully prove a random generated reputation', async () => {
@@ -89,7 +84,8 @@ describe('Prove reputation from attester circuit', function () {
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -97,20 +93,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
@@ -130,7 +123,8 @@ describe('Prove reputation from attester circuit', function () {
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -138,23 +132,20 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(reputationRecords[attesterId]['posRep'])),
-            prove_neg_rep: BigInt(Boolean(reputationRecords[attesterId]['negRep'])),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: reputationRecords[attesterId]['posRep'],
-            max_neg_rep: reputationRecords[attesterId]['negRep'],
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'],
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
-
+        
         const witness = await executeCircuit(circuit, circuitInputs)
         const startTime = new Date().getTime()
         const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
@@ -168,10 +159,16 @@ describe('Prove reputation from attester circuit', function () {
         const attesterIds = Object.keys(reputationRecords)
         const attesterId = attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)]
         const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
+        const zeroRepNullifiersAmount = 0
+        const zeroSelector: number[] = []
+        for (let i = 0; i < maxReputationBudget; i++) {
+            zeroSelector.push(0)
+        }
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -179,20 +176,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(1),
-            prove_neg_rep: BigInt(0),
-            prove_rep_diff: BigInt(0),
-            prove_graffiti: BigInt(0),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: zeroRepNullifiersAmount,
+            selectors: zeroSelector,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
@@ -205,14 +199,16 @@ describe('Prove reputation from attester circuit', function () {
         expect(isValid).to.be.true
     })
 
-    it('successfully choose to prove only maximum negative reputation', async () => {
+    it('successfully choose to prove only reputation nullifiers', async () => {
         const attesterIds = Object.keys(reputationRecords)
         const attesterId = attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)]
         const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
+        const zeroMinRep = 0
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -220,20 +216,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(0),
-            prove_neg_rep: BigInt(1),
-            prove_rep_diff: BigInt(0),
-            prove_graffiti: BigInt(0),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: zeroMinRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
@@ -246,58 +239,17 @@ describe('Prove reputation from attester circuit', function () {
         expect(isValid).to.be.true
     })
 
-    it('successfully choose to prove only minimum difference between positive and negative reputation', async () => {
+    it('successfully choose not to prove graffiti with wrong value', async () => {
         const attesterIds = Object.keys(reputationRecords)
         const attesterId = attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)]
         const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
-
-        const circuitInputs = {
-            epoch: epoch,
-            nonce: nonce,
-            identity_pk: user['keypair']['pubKey'],
-            identity_nullifier: user['identityNullifier'], 
-            identity_trapdoor: user['identityTrapdoor'],
-            user_tree_root: userStateRoot,
-            GST_path_index: GSTreeProof.indices,
-            GST_path_elements: GSTreeProof.pathElements,
-            GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
-            attester_id: attesterId,
-            pos_rep: reputationRecords[attesterId]['posRep'],
-            neg_rep: reputationRecords[attesterId]['negRep'],
-            graffiti: reputationRecords[attesterId]['graffiti'],
-            UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(0),
-            prove_neg_rep: BigInt(0),
-            prove_rep_diff: BigInt(1),
-            prove_graffiti: BigInt(0),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
-            graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
-        }
-
-        const witness = await executeCircuit(circuit, circuitInputs)
-        const startTime = new Date().getTime()
-        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
-        const endTime = new Date().getTime()
-        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
-        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
-        expect(isValid).to.be.true
-    })
-
-    it('successfully choose to prove only maximum positve reputation and others with wrong value', async () => {
-        const attesterIds = Object.keys(reputationRecords)
-        const attesterId = attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)]
-        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
-        const wrongMinRepDiff = Number(reputationRecords[attesterId]['posRep']) - Number(reputationRecords[attesterId]['negRep']) + 1
-        const wrongMaxNegRep = Number(reputationRecords[attesterId]['negRep']) - 1
+        const notProveGraffiti = 0
         const wrongGraffitiPreImage = genRandomSalt()
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -305,20 +257,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(1),
-            prove_neg_rep: BigInt(0),
-            prove_rep_diff: BigInt(0),
-            prove_graffiti: BigInt(0),
-            min_rep_diff: BigInt(wrongMinRepDiff),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(wrongMaxNegRep),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: notProveGraffiti,
             graffiti_pre_image: wrongGraffitiPreImage
         }
 
@@ -339,7 +288,8 @@ describe('Prove reputation from attester circuit', function () {
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -347,20 +297,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: wrongAttesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
@@ -373,6 +320,13 @@ describe('Prove reputation from attester circuit', function () {
         } finally {
             if (!error) throw Error("Root mismatch results from wrong attester Id should throw error")
         }
+
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
     })
 
     it('prove reputation with not exist user state should fail', async () => {
@@ -383,7 +337,8 @@ describe('Prove reputation from attester circuit', function () {
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -391,20 +346,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
@@ -417,41 +369,66 @@ describe('Prove reputation from attester circuit', function () {
         } finally {
             if (!error) throw Error("Root mismatch results from wrong user state should throw error")
         }
+
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
     })
 
-    it('prove reputation with incorrect reputation should fail', async () => {
-        const attesterIds = Object.keys(reputationRecords)
-        const attesterId = Number(attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)])
-        const posRep = reputationRecords[attesterId]['posRep']
-        const negRep = reputationRecords[attesterId]['negRep']
-        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
-        const wrongMinPosRep = Number(posRep) + 1
+    it('prove reputation nullifiers with insufficient rep score', async () => {
+        // User state
+        const insufficientUserStateTree = await genNewUserStateTree()
+
+        // Bootstrap user state
+        let insufficientAttesterId = Math.ceil(Math.random() * (2 ** circuitUserStateTreeDepth - 1))
+        while (reputationRecords[insufficientAttesterId] !== undefined) insufficientAttesterId = Math.floor(Math.random() * (2 ** circuitUserStateTreeDepth))
+        const insufficientPosRep = 5
+        const insufficientNegRep = 10
+        const insufficientGraffitiPreImage = genRandomSalt()
+        reputationRecords[insufficientAttesterId] = new Reputation(
+            BigInt(insufficientPosRep),
+            BigInt(insufficientNegRep),
+            hashOne(insufficientGraffitiPreImage),
+            BigInt(signUp)
+        )
+        await insufficientUserStateTree.update(BigInt(insufficientAttesterId), reputationRecords[insufficientAttesterId].hash())
+        
+        const USTPathElements = await insufficientUserStateTree.getMerkleProof(BigInt(insufficientAttesterId))
+        const insufficientUserStateRoot = insufficientUserStateTree.getRootHash()
+        // Global state tree
+        const insufficientGSTree = new IncrementalQuinTree(circuitGlobalStateTreeDepth, GSTZERO_VALUE, 2)
+        const commitment = genIdentityCommitment(user)
+        hashedLeaf = hashLeftRight(commitment, insufficientUserStateRoot)
+        insufficientGSTree.insert(hashedLeaf)
+        const insufficientGSTreeProof = insufficientGSTree.genMerklePath(0)
+        const insufficientGSTreeRoot = insufficientGSTree.root
 
         const circuitInputs1 = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
-            user_tree_root: userStateRoot,
-            GST_path_index: GSTreeProof.indices,
-            GST_path_elements: GSTreeProof.pathElements,
-            GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
-            attester_id: attesterId,
-            pos_rep: reputationRecords[attesterId]['posRep'],
-            neg_rep: reputationRecords[attesterId]['negRep'],
-            graffiti: reputationRecords[attesterId]['graffiti'],
+            user_tree_root: insufficientUserStateRoot,
+            GST_path_index: insufficientGSTreeProof.indices,
+            GST_path_elements: insufficientGSTreeProof.pathElements,
+            GST_root: insufficientGSTreeRoot,
+            attester_id: insufficientAttesterId,
+            pos_rep: reputationRecords[insufficientAttesterId]['posRep'],
+            neg_rep: reputationRecords[insufficientAttesterId]['negRep'],
+            graffiti: reputationRecords[insufficientAttesterId]['graffiti'],
+            sign_up: reputationRecords[insufficientAttesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(wrongMinPosRep),
-            max_neg_rep: BigInt(MAX_NEG_REP),
-            graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
+            graffiti_pre_image: insufficientGraffitiPreImage
         }
 
         let error
@@ -461,14 +438,119 @@ describe('Prove reputation from attester circuit', function () {
             error = e
             expect(true).to.be.true
         } finally {
-            if (!error) throw Error("Mismatch reputation record should throw error")
+            if (!error) throw Error("Prove nullifiers with insufficient rep score should throw error")
         }
 
-        const wrongMaxNegRep = Number(negRep) - 1
+        let startTime = new Date().getTime()
+        let results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs1))
+        let endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        let isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
 
+        // only prove minRep should fail
+        const zeroRepNullifiersAmount = 0
+        const zeroSelector: number[] = []
+        for (let i = 0; i < maxReputationBudget; i++) {
+            zeroSelector.push(0)
+        }
         const circuitInputs2 = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
+            identity_pk: user['keypair']['pubKey'],
+            identity_nullifier: user['identityNullifier'], 
+            identity_trapdoor: user['identityTrapdoor'],
+            user_tree_root: insufficientUserStateRoot,
+            GST_path_index: insufficientGSTreeProof.indices,
+            GST_path_elements: insufficientGSTreeProof.pathElements,
+            GST_root: insufficientGSTreeRoot,
+            attester_id: insufficientAttesterId,
+            pos_rep: reputationRecords[insufficientAttesterId]['posRep'],
+            neg_rep: reputationRecords[insufficientAttesterId]['negRep'],
+            graffiti: reputationRecords[insufficientAttesterId]['graffiti'],
+            sign_up: reputationRecords[insufficientAttesterId]['signUp'],
+            UST_path_elements: USTPathElements,
+            rep_nullifiers_amount: zeroRepNullifiersAmount,
+            selectors: zeroSelector,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
+            graffiti_pre_image: insufficientGraffitiPreImage
+        }
+
+        error
+        try {
+            await executeCircuit(circuit, circuitInputs2)
+        } catch (e) {
+            error = e
+            expect(true).to.be.true
+        } finally {
+            if (!error) throw Error("Prove min rep with insufficient rep score should throw error")
+        }
+
+        startTime = new Date().getTime()
+        results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs2))
+        endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
+
+        // only prove graffiti should success
+        const zeroMinRep = 0
+        const circuitInputs3 = {
+            epoch: epoch,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
+            identity_pk: user['keypair']['pubKey'],
+            identity_nullifier: user['identityNullifier'], 
+            identity_trapdoor: user['identityTrapdoor'],
+            user_tree_root: insufficientUserStateRoot,
+            GST_path_index: insufficientGSTreeProof.indices,
+            GST_path_elements: insufficientGSTreeProof.pathElements,
+            GST_root: insufficientGSTreeRoot,
+            attester_id: insufficientAttesterId,
+            pos_rep: reputationRecords[insufficientAttesterId]['posRep'],
+            neg_rep: reputationRecords[insufficientAttesterId]['negRep'],
+            graffiti: reputationRecords[insufficientAttesterId]['graffiti'],
+            sign_up: reputationRecords[insufficientAttesterId]['signUp'],
+            UST_path_elements: USTPathElements,
+            rep_nullifiers_amount: zeroRepNullifiersAmount,
+            selectors: zeroSelector,
+            rep_nonce: nonceList,
+            min_rep: zeroMinRep,
+            prove_graffiti: prove_graffiti,
+            graffiti_pre_image: insufficientGraffitiPreImage
+        }
+
+        const witness = await executeCircuit(circuit, circuitInputs3)
+        startTime = new Date().getTime()
+        results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs3))
+        endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.true
+    })
+
+    it('prove reputation nullifiers with incorrect nonce should fail', async () => {
+        const attesterIds = Object.keys(reputationRecords)
+        const attesterId = Number(attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)])
+        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
+        const posRep = reputationRecords[attesterId]['posRep']
+        const negRep = reputationRecords[attesterId]['negRep']
+        const wrongNonceStarter = Number(posRep - negRep) + 1
+        const wrongNonceList: number[] = []
+        for (let i = 0; i < repNullifiersAmount; i++) {
+            wrongNonceList.push(wrongNonceStarter + i)
+        }
+        for (let i = repNullifiersAmount; i < maxReputationBudget; i++) {
+            wrongNonceList.push(0)
+        }
+
+        const circuitInputs = {
+            epoch: epoch,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -476,31 +558,143 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(wrongMaxNegRep),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: wrongNonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
         }
 
+        let error
         try {
-            await executeCircuit(circuit, circuitInputs2)
+            await executeCircuit(circuit, circuitInputs)
+        } catch (e) {
+            error = e
+            expect(true).to.be.true
+        } finally {
+            if (!error) throw Error("Invalid nonce should throw error")
+        }
+
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
+    })
+
+    it('mismatch nullifier amount and selectors should fail', async () => {
+        const attesterIds = Object.keys(reputationRecords)
+        const attesterId = Number(attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)])
+        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
+        const wrongRepNullifiersAmount = repNullifiersAmount - 1
+        const wrongNonceList: number[] = []
+        for (let i = 0; i < repNullifiersAmount; i++) {
+            wrongNonceList.push(nonceStarter + i)
+        }
+        for (let i = repNullifiersAmount; i < maxReputationBudget; i++) {
+            wrongNonceList.push(0)
+        }
+
+        const circuitInputs = {
+            epoch: epoch,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
+            identity_pk: user['keypair']['pubKey'],
+            identity_nullifier: user['identityNullifier'], 
+            identity_trapdoor: user['identityTrapdoor'],
+            user_tree_root: userStateRoot,
+            GST_path_index: GSTreeProof.indices,
+            GST_path_elements: GSTreeProof.pathElements,
+            GST_root: GSTreeRoot,
+            attester_id: attesterId,
+            pos_rep: reputationRecords[attesterId]['posRep'],
+            neg_rep: reputationRecords[attesterId]['negRep'],
+            graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
+            UST_path_elements: USTPathElements,
+            rep_nullifiers_amount: wrongRepNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: wrongNonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
+            graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
+        }
+
+        let error
+        try {
+            await executeCircuit(circuit, circuitInputs)
+        } catch (e) {
+            error = e
+            expect(true).to.be.true
+        } finally {
+            if (!error) throw Error("Mismatch nullifier amount record should throw error")
+        }
+
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
+    })
+
+    it('prove reputation with incorrect reputation should fail', async () => {
+        const attesterIds = Object.keys(reputationRecords)
+        const attesterId = Number(attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)])
+        const posRep = reputationRecords[attesterId]['posRep']
+        const negRep = reputationRecords[attesterId]['negRep']
+        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
+        const wrongMinRep = Number(posRep - negRep) + 1
+
+        const circuitInputs = {
+            epoch: epoch,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
+            identity_pk: user['keypair']['pubKey'],
+            identity_nullifier: user['identityNullifier'], 
+            identity_trapdoor: user['identityTrapdoor'],
+            user_tree_root: userStateRoot,
+            GST_path_index: GSTreeProof.indices,
+            GST_path_elements: GSTreeProof.pathElements,
+            GST_root: GSTreeRoot,
+            attester_id: attesterId,
+            pos_rep: reputationRecords[attesterId]['posRep'],
+            neg_rep: reputationRecords[attesterId]['negRep'],
+            graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
+            UST_path_elements: USTPathElements,
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: wrongMinRep,
+            prove_graffiti: prove_graffiti,
+            graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
+        }
+
+        let error
+        try {
+            await executeCircuit(circuit, circuitInputs)
         } catch (e) {
             error = e
             expect(true).to.be.true
         } finally {
             if (!error) throw Error("Mismatch reputation record should throw error")
         }
+
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
     })
 
     it('prove reputation with wrong graffiti pre image should fail', async () => {
@@ -511,7 +705,8 @@ describe('Prove reputation from attester circuit', function () {
 
         const circuitInputs = {
             epoch: epoch,
-            nonce: nonce,
+            epoch_key_nonce: nonce,
+            epoch_key: epochKey,
             identity_pk: user['keypair']['pubKey'],
             identity_nullifier: user['identityNullifier'], 
             identity_trapdoor: user['identityTrapdoor'],
@@ -519,20 +714,17 @@ describe('Prove reputation from attester circuit', function () {
             GST_path_index: GSTreeProof.indices,
             GST_path_elements: GSTreeProof.pathElements,
             GST_root: GSTreeRoot,
-            nullifier_tree_root: nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
             attester_id: attesterId,
             pos_rep: reputationRecords[attesterId]['posRep'],
             neg_rep: reputationRecords[attesterId]['negRep'],
             graffiti: reputationRecords[attesterId]['graffiti'],
+            sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
+            rep_nullifiers_amount: repNullifiersAmount,
+            selectors: selectors,
+            rep_nonce: nonceList,
+            min_rep: minRep,
+            prove_graffiti: prove_graffiti,
             graffiti_pre_image: wrongGraffitiPreImage
         }
 
@@ -545,53 +737,12 @@ describe('Prove reputation from attester circuit', function () {
         } finally {
             if (!error) throw Error("Wrong graffiti pre-image should throw error")
         }
-    })
 
-    it('prove reputation with epoch key nullifier seen before should fail', async () => {
-        const attesterIds = Object.keys(reputationRecords)
-        const attesterId = Number(attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)])
-        const USTPathElements = await userStateTree.getMerkleProof(BigInt(attesterId))
-        // Create another nullifier tree that inserted the epoch key nullifier
-        const _nullifierTree = await genNewNullifierTree("circuit")
-        await _nullifierTree.update(BigInt(attesterId), SMT_ONE_LEAF)
-        const _nullifierTreeRoot = _nullifierTree.getRootHash()
-
-
-        const circuitInputs = {
-            epoch: epoch,
-            nonce: nonce,
-            identity_pk: user['keypair']['pubKey'],
-            identity_nullifier: user['identityNullifier'], 
-            identity_trapdoor: user['identityTrapdoor'],
-            user_tree_root: userStateRoot,
-            GST_path_index: GSTreeProof.indices,
-            GST_path_elements: GSTreeProof.pathElements,
-            GST_root: GSTreeRoot,
-            nullifier_tree_root: _nullifierTreeRoot,
-            nullifier_path_elements: epkNullifierProof,
-            attester_id: attesterId,
-            pos_rep: reputationRecords[attesterId]['posRep'],
-            neg_rep: reputationRecords[attesterId]['negRep'],
-            graffiti: reputationRecords[attesterId]['graffiti'],
-            UST_path_elements: USTPathElements,
-            prove_pos_rep: BigInt(Boolean(MIN_POS_REP)),
-            prove_neg_rep: BigInt(Boolean(MAX_NEG_REP)),
-            prove_rep_diff: BigInt(Boolean(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep'])),
-            prove_graffiti: BigInt(Boolean(reputationRecords[attesterId]['graffitiPreImage'])),
-            min_rep_diff: BigInt(reputationRecords[attesterId]['posRep'] - reputationRecords[attesterId]['negRep']),
-            min_pos_rep: BigInt(MIN_POS_REP),
-            max_neg_rep: BigInt(MAX_NEG_REP),
-            graffiti_pre_image: reputationRecords[attesterId]['graffitiPreImage']
-        }
-
-        let error
-        try {
-            await executeCircuit(circuit, circuitInputs)
-        } catch (e) {
-            error = e
-            expect(true).to.be.true
-        } finally {
-            if (!error) throw Error("Seen epoch key nullifier should throw error")
-        }
+        const startTime = new Date().getTime()
+        const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+        const endTime = new Date().getTime()
+        console.log(`Gen Proof time: ${endTime - startTime} ms (${Math.floor((endTime - startTime) / 1000)} s)`)
+        const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+        expect(isValid).to.be.false
     })
 })

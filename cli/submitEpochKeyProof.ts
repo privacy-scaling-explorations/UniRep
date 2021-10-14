@@ -8,7 +8,7 @@ import { epkProofPrefix, epkPublicSignalsPrefix } from './prefix'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
-        'verifyEpochKeyProof',
+        'submitEpochKeyProof',
         { add_help: true },
     )
 
@@ -56,9 +56,28 @@ const configureSubparser = (subparsers: any) => {
             help: 'The Unirep contract address',
         }
     )
+
+    const privkeyGroup = parser.add_mutually_exclusive_group({ required: true })
+
+    privkeyGroup.add_argument(
+        '-dp', '--prompt-for-eth-privkey',
+        {
+            action: 'store_true',
+            help: 'Whether to prompt for the user\'s Ethereum private key and ignore -d / --eth-privkey',
+        }
+    )
+
+    privkeyGroup.add_argument(
+        '-d', '--eth-privkey',
+        {
+            action: 'store',
+            type: 'str',
+            help: 'The deployer\'s Ethereum private key',
+        }
+    )
 }
 
-const verifyEpochKeyProof = async (args: any) => {
+const submitEpochKeyProof = async (args: any) => {
     
     // Ethereum provider
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
@@ -82,33 +101,25 @@ const verifyEpochKeyProof = async (args: any) => {
     const epk = publicSignals[2]
     const inputEpoch = publicSignals[1]
     const GSTRoot = publicSignals[0]
-    console.log(`Verifying epoch key ${epk} with GSTRoot ${GSTRoot} in epoch ${inputEpoch}`)
+    const epkProofData = publicSignals.concat([proof])
+    console.log(`Submit epoch key ${epk} with GSTRoot ${GSTRoot} in epoch ${inputEpoch}`)
     if(inputEpoch != currentEpoch) {
         console.log(`Warning: the epoch key is expired. Epoch key is in epoch ${inputEpoch}, but the current epoch is ${currentEpoch}`)
     }
 
-    // Check if Global state tree root exists
-    const isGSTRootExisted = unirepState.GSTRootExists(GSTRoot, inputEpoch)
-    if(!isGSTRootExisted) {
-        console.error('Error: invalid global state tree root')
-        return
+    // Connect a signer
+    await unirepContract.unlock(args.eth_privkey)
+
+    // Submit epoch key proof
+    const tx = await unirepContract.submitEpochKeyProof(epkProofData)
+    const proofIndex = await unirepContract.getEpochKeyProofIndex(epkProofData)
+    if(tx != undefined){
+        console.log('Transaction hash:', tx?.hash)
+        console.log('Proof index: ', proofIndex.toNumber())
     }
-    
-    // Verify the proof on-chain
-    const isProofValid = await unirepContract.verifyEpochKeyValidity(
-        GSTRoot,
-        inputEpoch,
-        epk,
-        proof,
-    )
-    if (!isProofValid) {
-        console.error('Error: invalid epoch key proof')
-        return
-    }
-    console.log(`Verify epoch key proof with epoch key ${epk} succeed`)
 }
 
 export {
-    verifyEpochKeyProof,
+    submitEpochKeyProof,
     configureSubparser,
 }

@@ -1,13 +1,9 @@
 import { ethers } from 'ethers'
-import { maxUsers } from '../config/testLocal'
-import { deployUnirep, getTreeDepthsForTesting } from '../core/utils'
+
+import { maxAttesters, maxReputationBudget, maxUsers } from '../config/testLocal'
+import { getTreeDepthsForTesting, deployUnirep } from '../core'
 import { DEFAULT_ATTESTING_FEE, DEFAULT_EPOCH_LENGTH, DEFAULT_ETH_PROVIDER, DEFAULT_MAX_EPOCH_KEY_NONCE, DEFAULT_TREE_DEPTHS_CONFIG } from './defaults'
-import {
-    checkDeployerProviderConnection,
-    genJsonRpcDeployer,
-    promptPwd,
-    validateEthSk,
-} from './utils'
+import { checkDeployerProviderConnection, genJsonRpcDeployer, promptPwd, validateEthSk, } from './utils'
 
 const configureSubparser = (subparsers: any) => {
     const deployParser = subparsers.add_parser(
@@ -42,15 +38,6 @@ const configureSubparser = (subparsers: any) => {
             help: 'A connection string to an Ethereum provider. Default: http://localhost:8545',
         }
     )
-
-    // deployParser.add_argument(
-    //     '-kn', '--max-epoch-key-nonce',
-    //     {
-    //         action: 'store',
-    //         type: 'int',
-    //         help: 'The maximum supported epoch key nonce. Default: 2',
-    //     }
-    // )
 
     deployParser.add_argument(
         '-l', '--epoch-length',
@@ -102,6 +89,9 @@ const deploy = async (args: any) => {
     // const _numEpochKeyNoncePerEpoch = (args.max_epoch_key_nonce != undefined) ? args.max_epoch_key_nonce : DEFAULT_MAX_EPOCH_KEY_NONCE
     const _numEpochKeyNoncePerEpoch = DEFAULT_MAX_EPOCH_KEY_NONCE
 
+    // Max reputation budget
+    const _maxReputationBudget = maxReputationBudget
+
     // Epoch length
     const _epochLength = (args.epoch_length != undefined) ? args.epoch_length : DEFAULT_EPOCH_LENGTH
 
@@ -109,10 +99,12 @@ const deploy = async (args: any) => {
     const _attestingFee = (args.attesting_fee != undefined) ? ethers.BigNumber.from(args.attesting_fee) : DEFAULT_ATTESTING_FEE
 
     const settings = {
-        'maxUsers': maxUsers,
-        'numEpochKeyNoncePerEpoch': _numEpochKeyNoncePerEpoch,
-        'epochLength': _epochLength,
-        'attestingFee': _attestingFee,
+        maxUsers: maxUsers,
+        maxAttesters: maxAttesters,
+        numEpochKeyNoncePerEpoch: _numEpochKeyNoncePerEpoch,
+        maxReputationBudget: _maxReputationBudget,
+        epochLength: _epochLength,
+        attestingFee: _attestingFee
     }
 
     // Tree depths config

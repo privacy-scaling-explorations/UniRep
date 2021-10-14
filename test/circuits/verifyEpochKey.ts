@@ -1,22 +1,10 @@
-import chai from "chai"
-import { genIdentity, genIdentityCommitment } from 'libsemaphore'
-
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-} from '../../circuits/utils'
-import { genEpochKey } from '../../core/utils'
-
-import {
-    genRandomSalt,
-    hashLeftRight,
-    IncrementalQuinTree,
-    stringifyBigInts,
-} from 'maci-crypto'
+import * as path from 'path'
+import { expect } from "chai"
+import { genRandomSalt, hashLeftRight, genIdentity, genIdentityCommitment, IncrementalQuinTree,  stringifyBigInts, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, genProofAndPublicSignals, verifyProof } from "../../circuits/utils"
 import { numEpochKeyNoncePerEpoch, circuitEpochTreeDepth, circuitGlobalStateTreeDepth } from "../../config/testLocal"
-import { genProofAndPublicSignals, verifyProof } from "../../circuits/utils"
+import { genEpochKey } from '../../core'
+
 
 describe('Verify Epoch Key circuits', function () {
     this.timeout(300000)
@@ -31,8 +19,9 @@ describe('Verify Epoch Key circuits', function () {
     let nonce, currentEpoch, epochKey
 
     before(async () => {
+        const circuitPath = path.join(__dirname, '../../circuits/test/verifyEpochKey_test.circom')
         const startCompileTime = Math.floor(new Date().getTime() / 1000)
-        circuit = await compileAndLoadCircuit('test/verifyEpochKey_test.circom')
+        circuit = await compileAndLoadCircuit(circuitPath)
         const endCompileTime = Math.floor(new Date().getTime() / 1000)
         console.log(`Compile time: ${endCompileTime - startCompileTime} seconds`)
 

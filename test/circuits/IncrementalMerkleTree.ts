@@ -1,29 +1,19 @@
-import chai from "chai"
-
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-    getSignalByName,
-} from '../../circuits/utils'
-
-import {
-    genRandomSalt,
-    IncrementalQuinTree,
-    hashOne,
-    SnarkBigInt,
-} from 'maci-crypto'
+import * as path from 'path'
+import { expect } from "chai"
+import { genRandomSalt, IncrementalQuinTree, hashOne, SnarkBigInt, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, getSignalByName, } from "../../circuits/utils"
 
 const LEVELS = 4
 const ZERO_VALUE = 0
 
-describe('Merkle Tree circuits', () => {
+describe('Merkle Tree circuits', function () {
+    this.timeout(30000)
     describe('LeafExists', () => {
         let circuit
 
         before(async () => {
-            circuit = await compileAndLoadCircuit('test/merkleTreeLeafExists_test.circom')
+            const circuitPath = path.join(__dirname, '../../circuits/test/merkleTreeLeafExists_test.circom')
+            circuit = await compileAndLoadCircuit(circuitPath)
         })
 
         it('Valid LeafExists inputs should work', async () => {
@@ -86,7 +76,8 @@ describe('Merkle Tree circuits', () => {
         let circuit
 
         before(async () => {
-            circuit = await compileAndLoadCircuit('test/merkleTreeInclusionProof_test.circom')
+            const circuitPath = path.join(__dirname, '../../circuits/test/merkleTreeInclusionProof_test.circom')
+            circuit = await compileAndLoadCircuit(circuitPath)
         })
 
         it('Valid update proofs should work', async () => {

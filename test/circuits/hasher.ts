@@ -1,26 +1,17 @@
-import chai from "chai"
+import * as path from 'path'
+import { expect } from "chai"
+import { stringifyBigInts, genRandomSalt, hashLeftRight, hash5, } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, getSignalByName, } from "../../circuits/utils"
 
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-    getSignalByName,
-} from '../../circuits/utils'
-
-import {
-    stringifyBigInts,
-    genRandomSalt,
-    hashLeftRight,
-    hash5,
-} from 'maci-crypto'
-
-describe('Poseidon hash circuits', () => {
+describe('Poseidon hash circuits', function (){
+    this.timeout(100000)
     let circuit
 
     describe('Hasher5', () => {
         it('correctly hashes 5 random values', async () => {
-            circuit = await compileAndLoadCircuit('test/hasher5_test.circom')
+            
+            const circuitPath = path.join(__dirname, '../../circuits/test/hasher5_test.circom')
+            circuit = await compileAndLoadCircuit(circuitPath)
             const preImages: any = []
             for (let i = 0; i < 5; i++) {
                 preImages.push(genRandomSalt())
@@ -42,7 +33,8 @@ describe('Poseidon hash circuits', () => {
     describe('HashLeftRight', () => {
 
         it('correctly hashes two random values', async () => {
-            const circuit = await compileAndLoadCircuit('test/hashleftright_test.circom')
+            const circuitPath = path.join(__dirname, '../../circuits/test/hashleftright_test.circom')
+            const circuit = await compileAndLoadCircuit(circuitPath)
 
             const left = genRandomSalt()
             const right = genRandomSalt()

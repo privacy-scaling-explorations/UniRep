@@ -1,20 +1,11 @@
 import base64url from 'base64url'
-import { ethers as hardhatEthers } from 'hardhat'
-import { genIdentityCommitment, unSerialiseIdentity } from 'libsemaphore'
+import { ethers } from 'ethers'
 
-import {
-    validateEthAddress,
-    contractExists,
-} from './utils'
-
+import { genIdentityCommitment, unSerialiseIdentity, add0x } from '../crypto'
+import { formatProofForVerifierContract, verifyProof } from '../circuits/utils'
 import { DEFAULT_ETH_PROVIDER, DEFAULT_START_BLOCK } from './defaults'
-
 import { genUserStateFromContract } from '../core'
-import { formatProofForVerifierContract } from '../circuits/utils'
-import { stringifyBigInts } from 'maci-crypto'
-import { add0x } from '../crypto/SMT'
-import { identityPrefix, reputationProofPrefix } from './prefix'
-import { genProofAndPublicSignals, verifyProof } from '../circuits/utils'
+import { identityPrefix, reputationPublicSignalsPrefix, reputationProofPrefix } from './prefix'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
@@ -41,6 +32,15 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
+        '-n', '--epoch-key-nonce',
+        {
+            required: true,
+            type: 'int',
+            help: 'The epoch key nonce',
+        }
+    )
+
+    parser.add_argument(
         '-a', '--attester-id',
         {
             required: true,
@@ -48,30 +48,23 @@ const configureSubparser = (subparsers: any) => {
             help: 'The attester id (in hex representation)',
         }
     )
+
+    parser.add_argument(
+        '-r', '--reputation-nullifier',
+        {
+            type: 'int',
+            help: 'The number of reputation nullifiers to prove',
+        }
+    )
     
     parser.add_argument(
-        '-mp', '--min-pos-rep',
+        '-mr', '--min-rep',
         {
             type: 'int',
-            help: 'The minimum positive score the attester given to the user',
+            help: 'The minimum positive score minus negative score the attester given to the user',
         }
     )
 
-    parser.add_argument(
-        '-mn', '--max-neg-rep',
-        {
-            type: 'int',
-            help: 'The maximum negative score the attester given to the user',
-        }
-    )
-
-    parser.add_argument(
-        '-md', '--min-rep-diff',
-        {
-            type: 'int',
-            help: 'The difference between positive and negative scores the attester given to the user',
-        }
-    )
 
     parser.add_argument(
         '-gp', '--graffiti-preimage',
@@ -102,24 +95,10 @@ const configureSubparser = (subparsers: any) => {
 
 const genReputationProof = async (args: any) => {
 
-    // Unirep contract
-    if (!validateEthAddress(args.contract)) {
-        console.error('Error: invalid Unirep contract address')
-        return
-    }
-
-    const unirepAddress = args.contract
-
     // Ethereum provider
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
-
-    const provider = new hardhatEthers.providers.JsonRpcProvider(ethProvider)
-
-    if (! await contractExists(provider, unirepAddress)) {
-        console.error('Error: there is no contract deployed at the specified address')
-        return
-    }
-
+    const provider = new ethers.providers.JsonRpcProvider(ethProvider)
+    
     const startBlock = (args.start_block) ? args.start_block : DEFAULT_START_BLOCK
 
     const encodedIdentity = args.identity.slice(identityPrefix.length)
@@ -130,42 +109,36 @@ const genReputationProof = async (args: any) => {
     // Gen reputation proof
     const userState = await genUserStateFromContract(
         provider,
-        unirepAddress,
+        args.contract,
         startBlock,
         id,
         commitment,
     )
     const attesterId = BigInt(add0x(args.attester_id))
+    const epkNonce = args.epoch_key_nonce
     // Proving content
-    const provePosRep = args.min_pos_rep != null ? BigInt(1) : BigInt(0)
-    const proveNegRep = args.max_neg_rep != null ? BigInt(1) : BigInt(0)
-    const proveRepDiff = args.min_rep_diff != null ? BigInt(1) : BigInt(0)
     const proveGraffiti = args.graffiti_preimage != null ? BigInt(1) : BigInt(0)
-    const minRepDiff = args.min_rep_diff != null ? BigInt(args.min_rep_diff) : BigInt(0)
-    const minPosRep = args.min_pos_rep != null ? BigInt(args.min_pos_rep) : BigInt(0)
-    const maxNegRep = args.max_neg_rep != null ? BigInt(args.max_neg_rep) : BigInt(0)
+    const minRep = args.min_rep != null ? BigInt(args.min_rep) : BigInt(0)
+    const repNullifiersAmount = args.reputation_nullifier != null ? args.reputation_nullifier : 0
     const graffitiPreImage = args.graffiti_preimage != null ? BigInt(add0x(args.graffiti_preimage)) : BigInt(0)
-    const circuitInputs = await userState.genProveReputationCircuitInputs(attesterId, provePosRep, proveNegRep, proveRepDiff, proveGraffiti, minPosRep, maxNegRep, minRepDiff, graffitiPreImage)
-    console.log('Proving reputation...')
-    console.log('----------------------User State----------------------')
-    console.log(userState.toJSON(4))
-    console.log('------------------------------------------------------')
-    console.log('----------------------Circuit inputs----------------------')
-    console.log(circuitInputs)
-    console.log('----------------------------------------------------------')
-    const results = await genProofAndPublicSignals('proveReputation',stringifyBigInts(circuitInputs))
+    const results = await userState.genProveReputationProof(attesterId, repNullifiersAmount, epkNonce, minRep, proveGraffiti, graffitiPreImage)
+
+    console.log('repnullifier amount', repNullifiersAmount)
 
     // TODO: Not sure if this validation is necessary
-    const isValid = await verifyProof('proveReputation',results['proof'], results['publicSignals'])
+    const isValid = await verifyProof('proveReputation',results.proof, results.publicSignals)
     if(!isValid) {
         console.error('Error: reputation proof generated is not valid!')
-        return
+        process.exit(0)
     }
     
-    const formattedProof = formatProofForVerifierContract(results["proof"])
+    const formattedProof = formatProofForVerifierContract(results.proof)
     const encodedProof = base64url.encode(JSON.stringify(formattedProof))
-    console.log(`Proof of reputation from attester ${attesterId}:`)
+    const encodedPublicSignals = base64url.encode(JSON.stringify(results.publicSignals))
+    console.log(`Proof of reputation from attester ${results.attesterId}:`)
+    console.log(`Epoch key of the user: ${BigInt(results.epochKey).toString()}`)
     console.log(reputationProofPrefix + encodedProof)
+    console.log(reputationPublicSignalsPrefix + encodedPublicSignals)
     process.exit(0)
 }
 

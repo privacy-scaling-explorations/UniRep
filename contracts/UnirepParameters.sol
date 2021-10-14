@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma abicoder v2;
-pragma solidity 0.7.6;
+pragma solidity 0.8.0;
 
 contract UnirepParameters {
     // This structs help to reduce the number of parameters to the constructor
@@ -8,12 +8,12 @@ contract UnirepParameters {
     struct TreeDepths {
         uint8 globalStateTreeDepth;
         uint8 userStateTreeDepth;
-        uint8 nullifierTreeDepth;
         uint8 epochTreeDepth;
     }
 
     struct MaxValues {
         uint256 maxUsers;
+        uint256 maxAttesters;
     }
 
     struct ProofsRelated {
@@ -23,25 +23,42 @@ contract UnirepParameters {
         bool isValid;
     }
 
-    struct UserTransitionedRelated{
-        uint256 fromEpoch;
-        uint256 fromGlobalStateTree;
-        uint256 fromEpochTree;
-        uint256 newGlobalStateTreeLeaf;
+    struct EpochKeyProofRelated{
+        uint256 globalStateTree;
+        uint256 epoch;
+        uint256 epochKey;
         uint256[8] proof;
-        uint256[] blindedUserStates;
-        uint256[] blindedHashChains;
-        uint256[] epkNullifiers;
     }
 
-    struct ReputationProofSignals{
-        uint256 provePosRep;
-        uint256 proveNegRep;
-        uint256 proveRepDiff;
+    struct SignUpProofRelated{
+        uint256 epoch;
+        uint256 epochKey;
+        uint256 globalStateTree;
+        uint256 attesterId;
+        uint256[8] proof;
+    }
+
+    struct UserTransitionedRelated{
+        uint256 newGlobalStateTreeLeaf;
+        uint256[] epkNullifiers;
+        uint256 transitionFromEpoch;
+        uint256[] blindedUserStates;
+        uint256 fromGlobalStateTree;
+        uint256[] blindedHashChains;
+        uint256 fromEpochTree;
+        uint256[8] proof;
+    }
+
+    struct ReputationProofRelated{
+        uint256[] repNullifiers;
+        uint256 epoch;
+        uint256 epochKey;
+        uint256 globalStateTree;
+        uint256 attesterId;
+        uint256 proveReputationAmount;
+        uint256 minRep;
         uint256 proveGraffiti;
-        uint256 minRepDiff;
-        uint256 minPosRep;
-        uint256 maxNegRep;
         uint256 graffitiPreImage;
+        uint256[8] proof;
     }
 }

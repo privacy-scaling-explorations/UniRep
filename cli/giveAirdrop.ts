@@ -1,13 +1,12 @@
-import base64url from 'base64url'
-import { add0x } from '../crypto'
-
 import { DEFAULT_ETH_PROVIDER } from './defaults'
-import { identityCommitmentPrefix } from './prefix'
 import { UnirepContract } from '../core'
+import { verifyUserSignUpProof } from './verifyUserSignUpProof'
+import { signUpProofPrefix, signUpPublicSignalsPrefix } from './prefix'
+import base64url from 'base64url'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
-        'userSignUp',
+        'giveAirdrop',
         { add_help: true },
     )
 
@@ -21,11 +20,20 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
-        '-c', '--identity-commitment',
+        '-p', '--public-signals',
         {
             required: true,
             type: 'str',
-            help: 'The user\'s identity commitment (in hex representation)',
+            help: 'The snark public signals of the user\'s epoch key ',
+        }
+    )
+
+    parser.add_argument(
+        '-pf', '--proof',
+        {
+            required: true,
+            type: 'str',
+            help: 'The snark proof of the user\'s epoch key ',
         }
     )
 
@@ -58,7 +66,7 @@ const configureSubparser = (subparsers: any) => {
     )
 }
 
-const userSignUp = async (args: any) => {
+const giveAirdrop = async (args: any) => {
 
     // Ethereum provider
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
@@ -69,20 +77,29 @@ const userSignUp = async (args: any) => {
     // Connect a signer
     await unirepContract.unlock(args.eth_privkey)
 
-    // Parse identity commitment
-    const encodedCommitment = args.identity_commitment.slice(identityCommitmentPrefix.length)
-    const decodedCommitment = base64url.decode(encodedCommitment)
-    const commitment = add0x(decodedCommitment)
+    await verifyUserSignUpProof(args)
+    
+    // Parse input
+    const decodedProof = base64url.decode(args.proof.slice(signUpProofPrefix.length))
+    const decodedPublicSignals = base64url.decode(args.public_signals.slice(signUpPublicSignalsPrefix.length))
+    const publicSignals = JSON.parse(decodedPublicSignals)
+    const epoch = publicSignals[0]
+    const epk = publicSignals[1]
+    const GSTRoot = publicSignals[2]
+    const attesterId = publicSignals[3]
+    const proof = JSON.parse(decodedProof)
+    console.log(`Airdrop to epoch key ${epk} in attester ID ${attesterId}`)
 
-    // Submit the user sign up transaction
-    const tx = await unirepContract.userSignUp(commitment)
-    const epoch = await unirepContract.currentEpoch()
-
-    console.log('Transaction hash:', tx?.hash)
-    console.log('Sign up epoch:', epoch.toString())
+    // Submit attestation
+    const tx = await unirepContract.airdropEpochKey(epoch, epk, GSTRoot, attesterId, proof)
+    const proofIndex = await unirepContract.getSignUpProofIndex([epoch, epk, GSTRoot, attesterId, proof])
+    if(tx != undefined){
+        console.log('Transaction hash:', tx?.hash)
+        console.log('Proof index:', proofIndex.toNumber())
+    }
 }
 
 export {
-    userSignUp,
+    giveAirdrop,
     configureSubparser,
 }

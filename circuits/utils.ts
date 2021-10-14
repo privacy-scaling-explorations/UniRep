@@ -1,6 +1,5 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { SnarkProof } from 'libsemaphore'
 const circom = require('circom')
 const snarkjs = require('snarkjs')
 
@@ -13,10 +12,7 @@ const buildPath = "../build"
 const compileAndLoadCircuit = async (
     circuitPath: string
 ) => {
-    const circuit = await circom.tester(path.join(
-        __dirname,
-        `../circuits/${circuitPath}`,
-    ))
+    const circuit = await circom.tester(circuitPath)
 
     await circuit.loadSymbols()
 
@@ -33,6 +29,13 @@ const executeCircuit = async (
     await circuit.loadSymbols()
 
     return witness
+}
+
+const getVKey = (
+    circuitName: string
+) => {
+    const vkeyJsonPath = path.join(__dirname, buildPath,`${circuitName}.vkey.json`)
+    return JSON.parse(fs.readFileSync(vkeyJsonPath).toString());
 }
 
 const getSignalByName = (
@@ -68,7 +71,7 @@ const verifyProof = async (
 }
 
 const formatProofForVerifierContract = (
-    _proof: SnarkProof,
+    _proof: any,
 ) => {
 
     return ([
@@ -87,6 +90,7 @@ export {
     compileAndLoadCircuit,
     executeCircuit,
     formatProofForVerifierContract,
+    getVKey,
     getSignalByName,
     genProofAndPublicSignals,
     verifyProof,

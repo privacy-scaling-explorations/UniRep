@@ -29,7 +29,7 @@ template StartTransition(GST_tree_depth) {
     signal output blinded_hash_chain_result;
 
     /* 1. Check if user exists in the Global State Tree */
-    component user_exist = userExists(GST_tree_depth);
+    component user_exist = UserExists(GST_tree_depth);
     for (var i = 0; i< GST_tree_depth; i++) {
         user_exist.GST_path_index[i] <== GST_path_index[i];
         user_exist.GST_path_elements[i][0] <== GST_path_elements[i][0];

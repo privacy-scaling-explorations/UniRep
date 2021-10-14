@@ -1,6 +1,6 @@
 import { ethers } from 'ethers'
 
-import { SNARK_FIELD_SIZE, SnarkBigInt, genRandomSalt, hash5, hashOne, hashLeftRight } from 'maci-crypto'
+import { SNARK_FIELD_SIZE, SnarkBigInt, genRandomSalt, hash5, hashOne, hashLeftRight, stringifyBigInts, unstringifyBigInts, IncrementalQuinTree } from 'maci-crypto'
 
 // A nothing-up-my-sleeve zero value
 // Should be equal to 16916383162496104613127564537688207714240750091683495371401923915264313510848
@@ -41,6 +41,9 @@ export {
     hash5,
     hashOne,
     hashLeftRight,
+    stringifyBigInts,
+    unstringifyBigInts,
+    IncrementalQuinTree,
     wrappedPoseidonT3Hash,
     newWrappedPoseidonT3Hash,
 }

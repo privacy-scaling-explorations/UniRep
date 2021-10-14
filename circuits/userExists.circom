@@ -2,7 +2,7 @@ include "./hasherPoseidon.circom";
 include "./identityCommitment.circom";
 include "./incrementalMerkleTree.circom";
 
-template userExists(GST_tree_depth){
+template UserExists(GST_tree_depth){
     // Global state tree
     signal private input GST_path_index[GST_tree_depth];
     signal private input GST_path_elements[GST_tree_depth][1];

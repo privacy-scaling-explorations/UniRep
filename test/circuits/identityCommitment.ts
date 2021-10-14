@@ -1,21 +1,15 @@
-import chai from "chai"
-
-const { expect } = chai
-
-import {
-    compileAndLoadCircuit,
-    executeCircuit,
-    getSignalByName,
-} from '../../circuits/utils'
-
-import { genIdentity, genIdentityCommitment } from 'libsemaphore'
+import * as path from 'path'
+import { expect } from "chai"
+import { genIdentity, genIdentityCommitment } from "../../crypto"
+import { compileAndLoadCircuit, executeCircuit, getSignalByName, } from "../../circuits/utils"
 
 describe('(Semaphore) identity commitment', function () {
     this.timeout(200000)
 
     it('identity computed should match', async () => {
         const startCompileTime = Math.floor(new Date().getTime() / 1000)
-        const circuit = await compileAndLoadCircuit('test/identityCommitment_test.circom')
+        const circuitPath = path.join(__dirname, '../../circuits/test/identityCommitment_test.circom')
+        const circuit = await compileAndLoadCircuit(circuitPath)
         const endCompileTime = Math.floor(new Date().getTime() / 1000)
         console.log(`Compile time: ${endCompileTime - startCompileTime} seconds`)
 

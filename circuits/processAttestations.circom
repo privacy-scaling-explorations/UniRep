@@ -1,5 +1,6 @@
 include "../node_modules/circomlib/circuits/comparators.circom";
 include "../node_modules/circomlib/circuits/mux1.circom";
+include "../node_modules/circomlib/circuits/gates.circom";
 include "./hasherPoseidon.circom";
 include "./sparseMerkleTree.circom";
 include "./verifyHashChain.circom";
@@ -15,6 +16,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
     signal private input old_pos_reps[NUM_ATTESTATIONS];
     signal private input old_neg_reps[NUM_ATTESTATIONS];
     signal private input old_graffities[NUM_ATTESTATIONS];
+    signal private input old_sign_ups[NUM_ATTESTATIONS];
     signal private input path_elements[NUM_ATTESTATIONS][user_state_tree_depth][1];
 
     // Inputs of the atttestations
@@ -23,6 +25,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
     signal private input neg_reps[NUM_ATTESTATIONS];
     signal private input graffities[NUM_ATTESTATIONS];
     signal private input overwrite_graffities[NUM_ATTESTATIONS];
+    signal private input sign_ups[NUM_ATTESTATIONS];
 
     // Selector is used to determined if the attestation should be processed
     signal private input selectors[NUM_ATTESTATIONS];
@@ -86,6 +89,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
     input_blinded_user_state === input_blinded_user_state_hasher.hash;
     /* End of 1. Verify blinded input user state*/
 
+    component sign_up_or_gate[NUM_ATTESTATIONS];
     for (var i = 0; i < NUM_ATTESTATIONS; i++) {
         /* 2. Verify attestation hash chain */
         // 2.1 Compute hash of the attestation and verify the hash chain of these hashes
@@ -94,7 +98,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
         attestation_hashers[i].in[1] <== pos_reps[i];
         attestation_hashers[i].in[2] <== neg_reps[i];
         attestation_hashers[i].in[3] <== graffities[i];
-        attestation_hashers[i].in[4] <== 0;
+        attestation_hashers[i].in[4] <== sign_ups[i];
         
         hash_chain_hasher.hashes[i] <== attestation_hashers[i].hash;
         hash_chain_hasher.selectors[i] <== selectors[i];
@@ -113,7 +117,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
         old_leaf_value_hasher[i].in[0] <== old_pos_reps[i];
         old_leaf_value_hasher[i].in[1] <== old_neg_reps[i];
         old_leaf_value_hasher[i].in[2] <== old_graffities[i];
-        old_leaf_value_hasher[i].in[3] <== 0;
+        old_leaf_value_hasher[i].in[3] <== old_sign_ups[i];
         old_leaf_value_hasher[i].in[4] <== 0;
 
         // Attestation record to be checked should have value hash5(pos, neg, graffiti)
@@ -138,11 +142,14 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
         overwrite_graffiti_muxer[i].c[0] <== old_graffities[i];
         overwrite_graffiti_muxer[i].c[1] <== graffities[i];
         overwrite_graffiti_muxer[i].s <== overwrite_graffities[i];
+        sign_up_or_gate[i] = OR();
+        sign_up_or_gate[i].a <== sign_ups[i];
+        sign_up_or_gate[i].b <== old_sign_ups[i];
         new_leaf_value_hasher[i] = Hasher5();
         new_leaf_value_hasher[i].in[0] <== pos_reps[i] + old_pos_reps[i];
         new_leaf_value_hasher[i].in[1] <== neg_reps[i] + old_neg_reps[i];
         new_leaf_value_hasher[i].in[2] <== overwrite_graffiti_muxer[i].out;
-        new_leaf_value_hasher[i].in[3] <== 0;
+        new_leaf_value_hasher[i].in[3] <== sign_up_or_gate[i].out;
         new_leaf_value_hasher[i].in[4] <== 0;
 
         // Attestation record to be checked should have value hash5(pos, neg, graffiti)
@@ -163,8 +170,8 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
         /* End of 3. process attestations and update user state tree */
     }
 
-    /* 5. Compute blinded public output */
-    // 5.1 blinded_user_state = hash5(identity, UST_root, epoch, epoch_key_nonce, 0)
+    /* 4. Compute blinded public output */
+    // 4.1 blinded_user_state = hash5(identity, UST_root, epoch, epoch_key_nonce, 0)
     component blinded_user_state_hasher = Hasher5();
     blinded_user_state_hasher.in[0] <== identity_nullifier;
     blinded_user_state_hasher.in[1] <== intermediate_user_state_tree_roots[NUM_ATTESTATIONS];
@@ -173,7 +180,7 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
     blinded_user_state_hasher.in[4] <== 0;
     blinded_user_state <== blinded_user_state_hasher.hash;
 
-    // 5.2 blinded_hash_chain_result = hash5(identity, hash_chain_result, epoch, epoch_key_nonce, 0)
+    // 4.2 blinded_hash_chain_result = hash5(identity, hash_chain_result, epoch, epoch_key_nonce, 0)
     component blinded_hash_chain_result_hasher = Hasher5();
     blinded_hash_chain_result_hasher.in[0] <== identity_nullifier;
     blinded_hash_chain_result_hasher.in[1] <== hash_chain_hasher.result;
@@ -181,5 +188,5 @@ template ProcessAttestations(user_state_tree_depth, NUM_ATTESTATIONS, EPOCH_KEY_
     blinded_hash_chain_result_hasher.in[3] <== to_nonce;
     blinded_hash_chain_result_hasher.in[4] <== 0;
     blinded_hash_chain_result <== blinded_hash_chain_result_hasher.hash;
-    /* End of 5. Compute blinded public output */
+    /* End of 4. Compute blinded public output */
 }

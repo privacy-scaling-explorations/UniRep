@@ -4,9 +4,7 @@ import * as path from 'path'
 import { stringifyBigInts } from 'maci-crypto';
 const compiler = require('circom').compiler
 const snarkjs = require('snarkjs')
-const fastFile = require("fastfile");
-
-import { genSnarkVerifierSol } from './genVerifier'
+const fastFile = require("fastfile")
 
 const fileExists = (filepath: string): boolean => {
     const currentPath = path.join(__dirname, '..')
@@ -54,14 +52,6 @@ const main = async () => {
     )
 
     parser.add_argument(
-        '-s', '--sol-out',
-        {
-            help: 'The filepath to save the Solidity verifier contract',
-            required: true
-        }
-    )
-
-    parser.add_argument(
         '-pt', '--ptau',
         {
             help: 'The filepath of existed ptau',
@@ -95,22 +85,12 @@ const main = async () => {
         }
     )
 
-    parser.add_argument(
-        '-vs', '--verifier-name',
-        {
-            help: 'The desired name of the verifier contract',
-            required: true
-        }
-    )
-
     const args = parser.parse_args()
-    const solOut = args.sol_out
     const inputFile = args.input
     const override = args.override
     const circuitOut = args.r1cs_out
     const symOut = args.sym_out
     const wasmOut = args.wasm_out
-    const verifierName = args.verifier_name
     const ptau = args.ptau
     const zkey = args.zkey_out
     const vkOut = args.vkey_out
@@ -153,13 +133,6 @@ const main = async () => {
         console.log(`Generated ${zkey} and ${vkOut}`)
     }
 
-    console.log('Exporting verification contract...')
-    const verifier = genSnarkVerifierSol(
-        verifierName,
-        JSON.parse(fs.readFileSync(vkOut).toString()),
-    )
-
-    fs.writeFileSync(solOut, verifier)
     return 0
 }
 

@@ -1,20 +1,8 @@
-import { ethers as hardhatEthers } from 'hardhat'
 import { ethers } from 'ethers'
 
-import {
-    promptPwd,
-    validateEthSk,
-    validateEthAddress,
-    checkDeployerProviderConnection,
-    contractExists,
-} from './utils'
-
+import { add0x } from '../crypto'
 import { DEFAULT_ETH_PROVIDER } from './defaults'
-
-import { add0x } from '../crypto/SMT'
-import { Attestation } from '../core'
-
-import Unirep from "../artifacts/contracts/Unirep.sol/Unirep.json"
+import { Attestation, UnirepContract } from '../core'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
@@ -28,6 +16,15 @@ const configureSubparser = (subparsers: any) => {
             action: 'store',
             type: 'str',
             help: `A connection string to an Ethereum provider. Default: ${DEFAULT_ETH_PROVIDER}`,
+        }
+    )
+
+    parser.add_argument(
+        '-i', '--proof-index',
+        {
+            required: true,
+            type: 'int',
+            help: 'The proof index of the user\'s epoch key ',
         }
     )
 
@@ -66,6 +63,15 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
+        '-s', '--sign-up',
+        {
+            action: 'store',
+            type: 'int',
+            help: 'Whether to set sign up flag to the user',
+        }
+    )
+
+    parser.add_argument(
         '-x', '--contract',
         {
             required: true,
@@ -96,85 +102,36 @@ const configureSubparser = (subparsers: any) => {
 
 const attest = async (args: any) => {
 
-    // Unirep contract
-    if (!validateEthAddress(args.contract)) {
-        console.error('Error: invalid Unirep contract address')
-        return
-    }
-
-    const unirepAddress = args.contract
-
     // Ethereum provider
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
 
-    let ethSk
-    // The deployer's Ethereum private key
-    // The user may either enter it as a command-line option or via the
-    // standard input
-    if (args.prompt_for_eth_privkey) {
-        ethSk = await promptPwd('Your Ethereum private key')
-    } else {
-        ethSk = args.eth_privkey
-    }
+    // Unirep contract
+    const unirepContract = new UnirepContract(args.contract, ethProvider)
 
-    if (!validateEthSk(ethSk)) {
-        console.error('Error: invalid Ethereum private key')
-        return
-    }
-
-    if (! (await checkDeployerProviderConnection(ethSk, ethProvider))) {
-        console.error('Error: unable to connect to the Ethereum provider at', ethProvider)
-        return
-    }
-
-    const provider = new hardhatEthers.providers.JsonRpcProvider(ethProvider)
-    const wallet = new ethers.Wallet(ethSk, provider)
-
-    if (! await contractExists(provider, unirepAddress)) {
-        console.error('Error: there is no contract deployed at the specified address')
-        return
-    }
-
-    const unirepContract = new ethers.Contract(
-        unirepAddress,
-        Unirep.abi,
-        wallet,
-    )
-    const attestingFee = await unirepContract.attestingFee()
+    // Connect a signer
+    await unirepContract.unlock(args.eth_privkey)
+    
+    // Parse input
+    const index = args.proof_index
+    const epochKey = args.epoch_key
+    const posRep = args.pos_rep != undefined ? args.pos_rep : 0
+    const negRep = args.neg_rep != undefined ? args.neg_rep : 0
+    const graffiti = args.graffiti != undefined ? BigInt(add0x(args.graffiti)) : BigInt(0)
+    const signUp = args.sign_up != undefined ? args.sign_up : 0
     const ethAddr = ethers.utils.computeAddress(args.eth_privkey)
     const attesterId = await unirepContract.attesters(ethAddr)
-    if (attesterId.toNumber() == 0) {
-        console.error('Error: attester has not registered yet')
-        return
-    }
-
-    const epk = BigInt(add0x(args.epoch_key))
-    const posRep = args.pos_rep ? args.pos_rep : 0
-    const negRep = args.neg_rep ? args.neg_rep : 0
-    const graffiti = args.graffiti ? BigInt(add0x(args.graffiti)) : BigInt(0)
     const attestation = new Attestation(
-        BigInt(attesterId),
+        BigInt(attesterId.toString()),
         BigInt(posRep),
         BigInt(negRep),
         graffiti,
+        BigInt(signUp)
     )
-    console.log(`Attesting to epoch key ${args.epoch_key} with pos rep ${posRep}, neg rep ${negRep} and graffiti ${graffiti.toString(16)}`)
-    let tx
-    try {
-        tx = await unirepContract.submitAttestation(
-            attestation,
-            epk,
-            { value: attestingFee, gasLimit: 1000000 }
-        )
-    } catch(e) {
-        console.error('Error: the transaction failed')
-        if (e.message) {
-            console.error(e.message)
-        }
-        return
-    }
+    console.log(`Attesting to epoch key ${epochKey} with pos rep ${posRep}, neg rep ${negRep}, graffiti ${graffiti.toString(16)} and sign up flag ${signUp}`)
 
-    console.log('Transaction hash:', tx.hash)
+    // Submit attestation
+    const tx = await unirepContract.submitAttestation(attestation, epochKey, index)
+    console.log('Transaction hash:', tx?.hash)
 }
 
 export {

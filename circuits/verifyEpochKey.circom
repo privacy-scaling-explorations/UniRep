@@ -3,7 +3,7 @@ include "./hasherPoseidon.circom";
 include "./incrementalMerkleTree.circom";
 include "./userExists.circom";
 
-template verifyEpochKey(GST_tree_depth, epoch_tree_depth, EPOCH_KEY_NONCE_PER_EPOCH) {
+template VerifyEpochKey(GST_tree_depth, epoch_tree_depth, EPOCH_KEY_NONCE_PER_EPOCH) {
     // Global state tree
     signal private input GST_path_index[GST_tree_depth];
     signal private input GST_path_elements[GST_tree_depth][1];
@@ -19,7 +19,7 @@ template verifyEpochKey(GST_tree_depth, epoch_tree_depth, EPOCH_KEY_NONCE_PER_EP
     signal input epoch_key;
 
     /* 1. Check if user exists in the Global State Tree */
-    component user_exist = userExists(GST_tree_depth);
+    component user_exist = UserExists(GST_tree_depth);
     for (var i = 0; i< GST_tree_depth; i++) {
         user_exist.GST_path_index[i] <== GST_path_index[i];
         user_exist.GST_path_elements[i][0] <== GST_path_elements[i][0];
