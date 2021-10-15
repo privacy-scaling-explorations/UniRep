@@ -1,14 +1,10 @@
-// The reason for the ts-ignore below is that if we are executing the code via `ts-node` instead of `hardhat`,
-// it can not read the hardhat config and error ts-2305 will be reported.
-// @ts-ignore
-import { ethers as hardhatEthers, waffle } from 'hardhat'
 import { ethers } from 'ethers'
 import Keyv from "keyv"
 import assert from 'assert'
 
 import { hash5, hashLeftRight, IncrementalQuinTree, SnarkBigInt, SparseMerkleTreeImpl } from '../crypto'
 import { attestingFee, circuitEpochTreeDepth, circuitGlobalStateTreeDepth, circuitUserStateTreeDepth, epochLength, epochTreeDepth, globalStateTreeDepth, maxAttesters, maxReputationBudget, maxUsers, numEpochKeyNoncePerEpoch, userStateTreeDepth } from '../config/testLocal'
-import { Attestation, IEpochTreeLeaf, UnirepState } from './UnirepState'
+import { Attestation, UnirepState } from './UnirepState'
 import { IUserStateLeaf, UserState } from './UserState'
 import { EPOCH_KEY_NULLIFIER_DOMAIN, REPUTATION_NULLIFIER_DOMAIN } from '../config/nullifierDomainSeparator'
 
@@ -95,6 +91,35 @@ const genNewSMT = async (treeDepth: number, defaultLeafHash: BigInt): Promise<Sp
     )
 }
 
+const linkLibraries = (
+    {
+      bytecode,
+      linkReferences,
+    }: {
+      bytecode: string
+      linkReferences: { [fileName: string]: { [contractName: string]: { length: number; start: number }[] } }
+    },
+    libraries: { [libraryName: string]: string }
+  ): string => {
+    Object.keys(linkReferences).forEach((fileName) => {
+      Object.keys(linkReferences[fileName]).forEach((contractName) => {
+        if (!libraries.hasOwnProperty(contractName)) {
+          throw new Error(`Missing link library name ${contractName}`)
+        }
+        const address = ethers.utils.getAddress(libraries[contractName]).toLowerCase().slice(2)
+        linkReferences[fileName][contractName].forEach(({ start: byteStart, length: byteLength }) => {
+          const start = 2 + byteStart * 2
+          const length = byteLength * 2
+          bytecode = bytecode
+            .slice(0, start)
+            .concat(address)
+            .concat(bytecode.slice(start + length, bytecode.length))
+        })
+      })
+    })
+    return bytecode
+}
+
 const deployUnirep = async (
     deployer: ethers.Signer,
     _treeDepths: any,
@@ -160,16 +185,14 @@ const deployUnirep = async (
         _epochLength = epochLength
         _attestingFee = attestingFee
     }
-    const f = await hardhatEthers.getContractFactory(
-        "Unirep",
-        {
-            signer: deployer,
-            libraries: {
-                "PoseidonT3": PoseidonT3Contract.address,
-                "PoseidonT6": PoseidonT6Contract.address
-            }
-        }
-    )
+    const bytecode = linkLibraries({
+        'bytecode': Unirep.bytecode,
+        'linkReferences': Unirep.linkReferences
+    }, {
+        "PoseidonT3": PoseidonT3Contract.address,
+        "PoseidonT6": PoseidonT6Contract.address
+    })
+    const f = new ethers.ContractFactory(Unirep.abi, bytecode, deployer)
     const c = await f.deploy(
         _treeDepths,
         {

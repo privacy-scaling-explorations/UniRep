@@ -7,9 +7,9 @@ import { formatProofForVerifierContract, verifyProof } from '../../circuits/util
 import { deployUnirep } from '../../core'
 
 import { genEpochKey, computeEmptyUserStateRoot, getTreeDepthsForTesting, verifyNewGSTProofByIndex } from '../../core/utils'
-import { computeEpochKeyProofHash, toCompleteHexString, verifyNewGSTLeafEvents, verifyProcessAttestationEvents } from '../utils'
+import { toCompleteHexString, verifyNewGSTLeafEvents } from '../utils'
 import { attestingFee, circuitEpochTreeDepth, circuitGlobalStateTreeDepth, circuitUserStateTreeDepth, epochLength, epochTreeDepth, maxReputationBudget, numEpochKeyNoncePerEpoch} from '../../config/testLocal'
-import { Attestation, IAttestation, IEpochTreeLeaf, IUserStateLeaf, UnirepState, UserState, genUserStateFromContract } from "../../core"
+import { Attestation, IAttestation, IUserStateLeaf, UnirepState, UserState, genUserStateFromContract } from "../../core"
 
 
 describe('Integration', function () {
@@ -533,7 +533,6 @@ describe('Integration', function () {
         })
 
         it('submit first user\'s first epoch key', async () => {
-            console.log(epochKeyProof)
             const tx = await unirepContract.submitEpochKeyProof(epochKeyProof)
             const receipt = await tx.wait()
             expect(receipt.status).equal(1)

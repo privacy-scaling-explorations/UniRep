@@ -89,7 +89,6 @@ describe('Prove user has signed up circuit', function () {
             sign_up: reputationRecords[attesterId]['signUp'],
             UST_path_elements: USTPathElements,
         }
-        console.log(circuitInputs)
         const witness = await executeCircuit(circuit, circuitInputs)
         const startTime = new Date().getTime()
         const results = await genProofAndPublicSignals('proveUserSignUp',stringifyBigInts(circuitInputs))
