@@ -4,7 +4,7 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "yarn downloadPtau && yarn buildCircuits && yarn buildVerifyEpochKeySnark && yarn buildUserStateTransitionSnark && yarn buildProveReputationSnark && yarn buildProveUserSignUpSnark && yarn compile",
+        "build": "yarn downloadPtau && yarn buildCircuits && yarn buildVerifyEpochKeySnark && yarn buildUserStateTransitionSnark && yarn buildProveReputationSnark && yarn buildProveUserSignUpSnark && ./scripts/buildVerifiers.sh && yarn compile",
         "compile": "npx hardhat compile",
         "downloadPtau": "./scripts/downloadPtau.sh",
         "buildCircuits": "npx ts-node scripts/buildCircuits.ts",
