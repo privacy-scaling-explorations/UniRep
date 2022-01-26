@@ -1,13 +1,10 @@
 import * as argparse from 'argparse' 
 import * as fs from 'fs'
 import * as path from 'path'
-import { stringifyBigInts } from 'maci-crypto';
+import { stringifyBigInts } from '../crypto';
 const compiler = require('circom').compiler
 const snarkjs = require('snarkjs')
 const fastFile = require("fastfile")
-
-import { getVKey } from "../circuits/utils"
-import { genSnarkVerifierSol } from './genVerifier'
 
 const fileExists = (filepath: string): boolean => {
     const currentPath = path.join(__dirname, '..')
@@ -79,30 +76,6 @@ const main = async () => {
     )
 
     parser.add_argument(
-        '-s', '--sol-out',
-        {
-            help: 'The filepath to save the Solidity verifier contract',
-            required: true
-        }
-    )
-
-    parser.add_argument(
-        '-cn', '--circuit-name',
-        {
-            help: 'The name of the vkey',
-            required: true
-        }
-    )
-
-    parser.add_argument(
-        '-vs', '--verifier-name',
-        {
-            help: 'The desired name of the verifier contract',
-            required: true
-        }
-    )
-
-    parser.add_argument(
         '-r', '--override',
         {
             help: 'Override an existing compiled circuit, proving key, and verifying key if set to true; otherwise (and by default), skip generation if a file already exists',
@@ -121,9 +94,6 @@ const main = async () => {
     const ptau = args.ptau
     const zkey = args.zkey_out
     const vkOut = args.vkey_out
-    const solOut = args.sol_out
-    const verifierName = args.verifier_name
-    const circuitName = args.circuit_name
 
     // Check if the input circom file exists
     const inputFileExists = fileExists(inputFile)
@@ -162,15 +132,6 @@ const main = async () => {
         await fs.promises.writeFile(vkOut, S);
         console.log(`Generated ${zkey} and ${vkOut}`)
     }
-
-    console.log('Exporting verification contract...')
-    const vKey = getVKey(circuitName)
-    const verifier = genSnarkVerifierSol(
-        verifierName,
-        vKey,
-    )
-
-    fs.writeFileSync(solOut, verifier)
 
     return 0
 }

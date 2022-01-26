@@ -7,6 +7,13 @@ include "./sparseMerkleTree.circom";
 include "./processAttestations.circom";
 include "./userExists.circom";
 
+/*
+    Prove: if epoch key and sealed_hash_chain matches the epoch tree root
+    epoch tree:
+        leaf index: epoch key
+        leaf value: sealed hash chain
+*/
+
 template EpochKeyExist(epoch_tree_depth) {
     signal input identity_nullifier;
     signal input epoch;
@@ -39,6 +46,13 @@ template EpochKeyExist(epoch_tree_depth) {
     }
     epoch_key <== epkModed;
 }
+
+/*
+    Prove: 
+        1. if user transitioned from an existed global state tree
+        2. all hash chain results and epoch keys match the same epoch tree root
+        3. computes a new global state tree leaf by hashLeftRight(id_commitment, UST_root)
+*/
 
 template UserStateTransition( GST_tree_depth,  epoch_tree_depth,  user_state_tree_depth,  EPOCH_KEY_NONCE_PER_EPOCH) {
     signal input epoch;

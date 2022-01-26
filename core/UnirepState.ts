@@ -1,7 +1,7 @@
 import assert from 'assert'
 import { ethers } from 'ethers'
-import { IncrementalQuinTree, hash5, hashLeftRight, SparseMerkleTreeImpl } from '../crypto'
-import { computeEmptyUserStateRoot, genNewSMT, SMT_ONE_LEAF, } from './utils'
+import { IncrementalQuinTree, hash5, hashLeftRight, SparseMerkleTreeImpl, stringifyBigInts } from '../crypto'
+import { computeEmptyUserStateRoot, computeInitUserStateRoot, genNewSMT, SMT_ONE_LEAF, } from './utils'
 
 interface IEpochTreeLeaf {
     epochKey: BigInt;
@@ -15,6 +15,27 @@ interface IAttestation {
     graffiti: BigInt;
     signUp: BigInt;
     hash(): BigInt;
+    toJSON(): string;
+}
+
+interface ISettings {
+    readonly globalStateTreeDepth: number;
+    readonly userStateTreeDepth: number;
+    readonly epochTreeDepth: number;
+    readonly attestingFee: ethers.BigNumber;
+    readonly epochLength: number;
+    readonly numEpochKeyNoncePerEpoch: number;
+    readonly maxReputationBudget: number;
+}
+
+interface IUnirepState {
+    readonly settings: ISettings;
+    currentEpoch: number;
+    latestProcessedBlock: number;
+    GSTLeaves: {[key: string]: string[]};
+    epochTreeLeaves: {[key: string]: string[]};
+    latestEpochKeyToAttestationsMap: {[key: string]: string[]};
+    nullifiers: string[];
 }
 
 class Attestation implements IAttestation {
@@ -64,90 +85,123 @@ class Attestation implements IAttestation {
 }
 
 class UnirepState {
-    public globalStateTreeDepth: number
-    public userStateTreeDepth: number
-    public epochTreeDepth: number
-
-    public attestingFee: ethers.BigNumber
-    public epochLength: number
-    public numEpochKeyNoncePerEpoch: number
-    public maxReputationBudget: number
+    public readonly setting: ISettings
     
-    public currentEpoch: number
-    public defaultGSTLeaf: BigInt
-    public epochTreeRoot: {[key: number]: BigInt} = {}
+    public currentEpoch: number = 1
+    private epochTreeRoot: {[key: number]: BigInt} = {}
     private GSTLeaves: {[key: number]: BigInt[]} = {}
     private epochTreeLeaves: {[key: number]: IEpochTreeLeaf[]} = {}
     private nullifiers: {[key: string]: boolean} = {}
     private globalStateTree: {[key: number]: IncrementalQuinTree} = {}
     private epochTree: {[key: number]: SparseMerkleTreeImpl} = {}
+    private defaultGSTLeaf: BigInt
+    private userNum: number = 0
 
+    public latestProcessedBlock: number = 0
+    private sealedEpochKey: {[key: string]: boolean} = {}
     private epochKeyInEpoch: {[key: number]: Map<string, boolean>} = {}
-    private epochKeyToHashchainMap: {[key: string]: BigInt} = {}
     private epochKeyToAttestationsMap: {[key: string]: IAttestation[]} = {}
     private epochGSTRootMap: {[key: number]: Map<string, boolean>} = {}
 
     constructor(
-        _globalStateTreeDepth: number,
-        _userStateTreeDepth: number,
-        _epochTreeDepth: number,
-        _attestingFee: ethers.BigNumber,
-        _epochLength: number,
-        _numEpochKeyNoncePerEpoch: number,
-        _maxReputationBudget: number,
+        _setting: ISettings,
+        _currentEpoch?: number,
+        _latestBlock?: number,
+        _GSTLeaves?: {[key: number]: BigInt[]},
+        _epochTreeLeaves?: {[key: number]: IEpochTreeLeaf[]},
+        _epochKeyToAttestationsMap?: {[key: string]: IAttestation[]},
+        _nullifiers?: {[key: string]: boolean},
     ) {
-
-        this.globalStateTreeDepth = _globalStateTreeDepth
-        this.userStateTreeDepth = _userStateTreeDepth
-        this.epochTreeDepth = _epochTreeDepth
-        this.attestingFee = _attestingFee
-        this.epochLength = _epochLength
-        this.numEpochKeyNoncePerEpoch = _numEpochKeyNoncePerEpoch
-        this.maxReputationBudget = _maxReputationBudget
-
-        this.currentEpoch = 1
-        this.GSTLeaves[this.currentEpoch] = []
+        this.setting = _setting
+        if(_currentEpoch !== undefined) 
+            this.currentEpoch = _currentEpoch
+        
+        if(_latestBlock !== undefined) 
+            this.latestProcessedBlock = _latestBlock
+        
         this.epochKeyInEpoch[this.currentEpoch] = new Map()
         this.epochTreeRoot[this.currentEpoch] = BigInt(0)
-        const emptyUserStateRoot = computeEmptyUserStateRoot(_userStateTreeDepth)
+        const emptyUserStateRoot = computeEmptyUserStateRoot(this.setting.userStateTreeDepth)
         this.defaultGSTLeaf = hashLeftRight(BigInt(0), emptyUserStateRoot)
-        this.globalStateTree[this.currentEpoch] = new IncrementalQuinTree(
-            this.globalStateTreeDepth,
-            this.defaultGSTLeaf,
-            2,
-        )
-        this.epochGSTRootMap[this.currentEpoch] = new Map()
+        if(_GSTLeaves !== undefined) {
+            this.GSTLeaves = _GSTLeaves
+            for (let key in this.GSTLeaves) {
+                this.globalStateTree[key] = new IncrementalQuinTree(
+                    this.setting.globalStateTreeDepth,
+                    this.defaultGSTLeaf,
+                    2,
+                )
+                this.epochGSTRootMap[key] = new Map()
+                this.GSTLeaves[key].map(n => {
+                    this.globalStateTree[key].insert(n)
+                    this.epochGSTRootMap[key].set(
+                        this.globalStateTree[key].root.toString(), 
+                        true
+                    )
+                })
+            }
+        }
+        else {
+            this.GSTLeaves[this.currentEpoch] = []
+            this.globalStateTree[this.currentEpoch] = new IncrementalQuinTree(
+                this.setting.globalStateTreeDepth,
+                this.defaultGSTLeaf,
+                2,
+            )
+            this.epochGSTRootMap[this.currentEpoch] = new Map()
+        }
+
+        if(_epochTreeLeaves !== undefined) {
+            this.epochTreeLeaves = _epochTreeLeaves
+            for (const key in _epochTreeLeaves) {
+                for (const leaf of _epochTreeLeaves[key]) {
+                    this.sealedEpochKey[leaf.epochKey.toString()] = true
+                }
+            }
+        }
+
+        if(_epochKeyToAttestationsMap !== undefined) {
+            this.epochKeyToAttestationsMap = _epochKeyToAttestationsMap
+            for (const key in this.epochKeyToAttestationsMap) {
+                this.epochKeyInEpoch[this.currentEpoch].set(key, true)
+            }
+        }
+
+        if(_nullifiers != undefined) 
+            this.nullifiers = _nullifiers
     }
 
     public toJSON = (space = 0): string => {
-        let latestEpochTreeLeaves
-        let latestEpothTreeRoot
-        if (this.currentEpoch == 1) { 
-            latestEpochTreeLeaves = []
-            latestEpothTreeRoot = BigInt(0).toString()
+        const epochKeys = this.getEpochKeys(this.currentEpoch)
+        const attestationsMapToString: {[key: string]: string[]} = {}
+        for (const key of epochKeys) {
+            attestationsMapToString[key] = this.epochKeyToAttestationsMap[key].map((n) => (n.toJSON()))
         }
-        else {
-            latestEpochTreeLeaves = this.epochTreeLeaves[this.currentEpoch - 1].map((l) => `${l.epochKey.toString()}: ${l.hashchainResult.toString()}`)
-            latestEpothTreeRoot = this.epochTreeRoot[this.currentEpoch - 1].toString()
+        const epochTreeLeavesToString = {}
+        for (let index in this.epochTreeLeaves) {
+            epochTreeLeavesToString[index] = this.epochTreeLeaves[index].map(
+                (l) => 
+                `${l.epochKey.toString()}: ${l.hashchainResult.toString()}`
+            )
         }
         return JSON.stringify(
             {
                 settings: {
-                    globalStateTreeDepth: this.globalStateTreeDepth,
-                    userStateTreeDepth: this.userStateTreeDepth,
-                    epochTreeDepth: this.epochTreeDepth,
-                    attestingFee: this.attestingFee.toString(),
-                    epochLength: this.epochLength,
-                    numEpochKeyNoncePerEpoch: this.numEpochKeyNoncePerEpoch,
-                    maxReputationBudget: this.maxReputationBudget,
+                    globalStateTreeDepth: this.setting.globalStateTreeDepth,
+                    userStateTreeDepth: this.setting.userStateTreeDepth,
+                    epochTreeDepth: this.setting.epochTreeDepth,
+                    attestingFee: this.setting.attestingFee.toString(),
+                    epochLength: this.setting.epochLength,
+                    numEpochKeyNoncePerEpoch: this.setting.numEpochKeyNoncePerEpoch,
+                    maxReputationBudget: this.setting.maxReputationBudget,
                     defaultGSTLeaf: this.defaultGSTLeaf.toString(),
                 },
                 currentEpoch: this.currentEpoch,
-                latestEpochGSTLeaves: this.GSTLeaves[this.currentEpoch].map((l) => l.toString()),
-                latestEpochTreeLeaves: latestEpochTreeLeaves,
-                latestEpochTreeRoot: latestEpothTreeRoot,
-                globalStateTreeRoots: Array.from(this.epochGSTRootMap[this.currentEpoch].keys()),
-                nullifiers: this.nullifiers
+                latestProcessedBlock: this.latestProcessedBlock,
+                GSTLeaves: Object(stringifyBigInts(this.GSTLeaves)),
+                epochTreeLeaves: Object(epochTreeLeavesToString),
+                latestEpochKeyToAttestationsMap: attestationsMapToString,
+                nullifiers: Object.keys(this.nullifiers)
             },
             null,
             space
@@ -158,33 +212,31 @@ class UnirepState {
      * Get the number of GST leaves of given epoch
      */
     public getNumGSTLeaves = (epoch: number): number => {
-        if (epoch > this.currentEpoch) return 0
-        return this.GSTLeaves[epoch].length
-    }
+        this._checkValidEpoch(epoch)
 
-    /*
-     * Get the hash chain result of given epoch key
-     */
-    public getHashchain = (epochKey: string): BigInt => {
-        const DefaultHashchainResult = SMT_ONE_LEAF
-        const hashchain = this.epochKeyToHashchainMap[epochKey]
-        if (!hashchain) return DefaultHashchainResult
-        else return hashchain
+        return this.GSTLeaves[epoch].length
     }
 
     /*
      * Get the attestations of given epoch key
      */
     public getAttestations = (epochKey: string): IAttestation[] => {
+        this._checkEpochKeyRange(epochKey)
+
         const attestations = this.epochKeyToAttestationsMap[epochKey]
-        if (!attestations) return []
-        else return attestations
+        if (!attestations) 
+            return []
+        else 
+            return attestations
     }
 
     /*
      * Get all epoch keys of given epoch key
      */
     public getEpochKeys = (epoch: number): string[] => {
+        this._checkValidEpoch(epoch)
+        if(this.epochKeyInEpoch[epoch] == undefined) 
+            return []
         return Array.from(this.epochKeyInEpoch[epoch].keys())
     }
 
@@ -192,73 +244,100 @@ class UnirepState {
      * Check if given nullifier exists in Unirep State
      */
     public nullifierExist = (nullifier: BigInt): boolean => {
-        if (nullifier === BigInt(0)) {
-            console.log("Nullifier 0 exists because it is reserved")
-            return true
+        // Nullifier 0 exists because it is reserved
+        if (nullifier === BigInt(0)) return true
+        if (this.nullifiers[nullifier.toString()]) return true
+        return false
+    }
+    
+    /*
+     * If one of the nullifiers exist in Unirep state, return true
+     */
+    public nullifiersExist = (nullifiers: BigInt[]): boolean => {
+        let exist = false
+        for (let nullifier of nullifiers) {
+            exist = this.nullifierExist(nullifier)
         }
-        return this.nullifiers[nullifier.toString()]
+        return exist
     }
 
+    /*
+    * Check if the block has been processed
+    */
+    private _checkBlockNumber = (blockNumber: number | undefined) => {
+        if(
+            blockNumber !== undefined && 
+            blockNumber < this.latestProcessedBlock
+        ) return
+        else this.latestProcessedBlock = blockNumber? blockNumber : this.latestProcessedBlock
+    }
 
     /*
-     * Add a new attestation to the list of attestations to the epoch key.
-     */
-    public addAttestation = (
-        epochKey: string,
-        attestation: IAttestation,
-    ) => {
-        const attestations = this.epochKeyToAttestationsMap[epochKey]
-        if (!attestations) this.epochKeyToAttestationsMap[epochKey] = []
-        this.epochKeyToAttestationsMap[epochKey].push(attestation)
-        this.epochKeyInEpoch[this.currentEpoch].set(epochKey, true)
-        if (this.epochKeyToHashchainMap[epochKey] == undefined){
-            this.epochKeyToHashchainMap[epochKey] = BigInt(0)
-        }
-        this.epochKeyToHashchainMap[epochKey] = hashLeftRight(
-            attestation.hash(),
-            this.epochKeyToHashchainMap[epochKey],
+    * Check if epoch matches current epoch
+    */
+    private _checkCurrentEpoch = (epoch: number) => {
+        assert(
+            epoch === this.currentEpoch,
+            `UnirepState: Epoch (${epoch}) must be the same as the current epoch ${this.currentEpoch}`
         )
     }
 
     /*
-    * Add reputation nullifiers to the map state
+    * Check if epoch is less than the current epoch
     */
-    public addReputationNullifiers = (
-        nullifier: BigInt
-    ) => {
-        if (nullifier > BigInt(0)) {
-            this.nullifiers[nullifier.toString()] = true
-        }
+    private _checkValidEpoch = (epoch: number) => {
+        assert(
+            epoch <= this.currentEpoch,
+            `UnirepState: Epoch (${epoch}) must be less than the current epoch ${this.currentEpoch}`
+        )
     }
 
     /*
-     * Computes the global state tree of given epoch
-     */
-    public genGSTree = (epoch: number): IncrementalQuinTree => {
-        return this.globalStateTree[epoch]
+    * Check if the user number is greater than the capacity
+    */
+    private _checkMaxUser = () => {
+        assert(
+            this.userNum < 2 ** this.setting.globalStateTreeDepth,
+            `UnirepState: users number reaches the Unirep capacity, it should be less than ${2 ** this.setting.globalStateTreeDepth}`
+        )
     }
 
     /*
-     * Computes the epoch tree of given epoch
-     */
-    public genEpochTree = (epoch: number): SparseMerkleTreeImpl => {
-        return this.epochTree[epoch]
+    * Check if nullifier has been submitted before
+    */
+    private _checkNullifier = (nullifier: BigInt) => {
+        assert(
+            this.nullifierExist(nullifier) === false,
+            `UnirepState: Nullifier ${nullifier.toString()} has been submitted before`
+        )
     }
 
+    /*
+    * Check if epoch key is greater than max epoch tree leaf value
+    */
+    private _checkEpochKeyRange = (epochKey: string) => {
+        assert(
+            BigInt(epochKey) < BigInt(2 ** this.setting.epochTreeDepth), 
+            `UnirepState: Epoch key (${epochKey}) greater than max leaf value(2**epochTreeDepth)`
+        )
+    }
 
     /*
-     * Add a new state leaf to the list of GST leaves of given epoch.
-     */
-    public signUp = (
-        epoch: number,
-        GSTLeaf: BigInt,
-    ) => {
-        assert(epoch == this.currentEpoch, `Epoch(${epoch}) must be the same as current epoch`)
+    * Check if epoch key has been sealed
+    */
+    private _isEpochKeySealed = (epochKey: string) => {
+        assert(
+            this.sealedEpochKey[epochKey] !== true, 
+            `UnirepState: Epoch key (${epochKey}) has been sealed`
+        )
+    }
 
-        // Note that we do not insert a state leaf to any state tree here. This
-        // is because we want to keep the state minimal, and only compute what
-        // is necessary when it is needed. This may change if we run into
-        // severe performance issues, but it is currently worth the tradeoff.
+    /*
+    * Update Unirep global state tree in the given epoch
+    */
+    private _updateGSTree = (epoch: number, GSTLeaf: BigInt) => {
+        // Only insert non-zero GST leaf (zero GST leaf means the user has epoch keys left to process)
+        if (GSTLeaf <= BigInt(0)) return
         this.GSTLeaves[epoch].push(GSTLeaf)
 
         // update GST when new leaf is inserted
@@ -268,75 +347,27 @@ class UnirepState {
     }
 
     /*
-     * Add the leaves of epoch tree of given epoch and increment current epoch number
+     * Computes the global state tree of given epoch
      */
-    public epochTransition = async (
-        epoch: number,
-    ) => {
-        assert(epoch == this.currentEpoch, `Epoch(${epoch}) must be the same as current epoch`)
-        this.epochTree[epoch] = await genNewSMT(this.epochTreeDepth, SMT_ONE_LEAF)
-        const epochTreeLeaves: IEpochTreeLeaf[] = []
-
-        // seal all epoch keys in current epoch
-        const epochKeys = this.getEpochKeys(epoch)
-        for (let epochKey of epochKeys) {
-            this.epochKeyToHashchainMap[epochKey] = hashLeftRight(
-                BigInt(1),
-                this.epochKeyToHashchainMap[epochKey]
-            )
-            const epochTreeLeaf: IEpochTreeLeaf = {
-                epochKey: BigInt(epochKey),
-                hashchainResult: this.epochKeyToHashchainMap[epochKey]
-            }
-            epochTreeLeaves.push(epochTreeLeaf)
-        }
-
-        // Add to epoch key hash chain map
-        for (let leaf of epochTreeLeaves) {
-            assert(leaf.epochKey < BigInt(2 ** this.epochTreeDepth), `Epoch key(${leaf.epochKey}) greater than max leaf value(2**epochTreeDepth)`)
-            // if (this.epochKeyToHashchainMap[leaf.epochKey.toString()] !== undefined) console.log(`The epoch key(${leaf.epochKey}) is seen before`)
-            // else this.epochKeyToHashchainMap[leaf.epochKey.toString()] = leaf.hashchainResult
-            await this.epochTree[epoch].update(leaf.epochKey, leaf.hashchainResult)
-        }
-        this.epochTreeLeaves[epoch] = epochTreeLeaves.slice()
-        this.epochTreeRoot[epoch] = this.epochTree[epoch].getRootHash()
-        this.currentEpoch ++
-        this.GSTLeaves[this.currentEpoch] = []
-        this.epochKeyInEpoch[this.currentEpoch] = new Map()
-        this.globalStateTree[this.currentEpoch] = new IncrementalQuinTree(
-            this.globalStateTreeDepth,
-            this.defaultGSTLeaf,
-            2,
-        )
-        this.epochGSTRootMap[this.currentEpoch] = new Map()
+    public genGSTree = (epoch: number): IncrementalQuinTree => {
+        this._checkValidEpoch(epoch)
+        return this.globalStateTree[epoch]
     }
 
     /*
-     * Add a new state leaf to the list of GST leaves of given epoch.
+     * Computes the epoch tree of given epoch
      */
-    public userStateTransition = (
-        epoch: number,
-        GSTLeaf: BigInt,
-        nullifiers: BigInt[],
-    ) => {
-        assert(epoch == this.currentEpoch, `Epoch(${epoch}) must be the same as current epoch`)
+    public genEpochTree = async (epoch: number): Promise<SparseMerkleTreeImpl> => {
+        this._checkValidEpoch(epoch)
+        const epochTree = await genNewSMT(this.setting.epochTreeDepth, SMT_ONE_LEAF)
 
-        // Check if all nullifiers are not duplicated then update Unirep state
-        for (let nullifier of nullifiers) {
-            if (nullifier > BigInt(0)) {
-                if(this.nullifiers[nullifier.toString()]) return
+        const leaves = this.epochTreeLeaves[epoch]
+        if (!leaves) return epochTree
+        else {
+            for (const leaf of leaves) {
+                await epochTree.update(leaf.epochKey, leaf.hashchainResult)
             }
-        }
-
-        // Update Unirep state when all nullifiers are not submitted before
-        for (let nullifier of nullifiers) {
-            if (nullifier > BigInt(0)) this.nullifiers[nullifier.toString()] = true
-        }
-        // Only insert non-zero GST leaf (zero GST leaf means the user has epoch keys left to process)
-        if (GSTLeaf > BigInt(0)) {
-            this.GSTLeaves[epoch].push(GSTLeaf)
-            this.globalStateTree[epoch].insert(GSTLeaf)
-            this.epochGSTRootMap[epoch].set(this.globalStateTree[epoch].root.toString(), true)
+            return epochTree
         }
     }
 
@@ -347,17 +378,169 @@ class UnirepState {
         GSTRoot: BigInt | string,
         epoch: number,
     ): boolean => {
+        this._checkValidEpoch(epoch)
         return this.epochGSTRootMap[epoch].has(GSTRoot.toString())
     }
 
     /*
      * Check if the root is one of the epoch tree roots in the given epoch
      */
-    public epochTreeRootExists = (
+    public epochTreeRootExists = async (
         _epochTreeRoot: BigInt | string,
         epoch: number,
-    ): boolean => {
+    ): Promise<boolean> => {
+        this._checkValidEpoch(epoch)
+        if(this.epochTreeRoot[epoch] == undefined) {
+            const epochTree = await this.genEpochTree(epoch)
+            this.epochTreeRoot[epoch] = epochTree.getRootHash()
+        }
         return this.epochTreeRoot[epoch].toString() == _epochTreeRoot.toString()
+    }
+
+    /*
+     * Add a new state leaf to the list of GST leaves of given epoch.
+     */
+    public signUp = async (
+        epoch: number,
+        idCommitment: BigInt,
+        attesterId?: number,
+        airdropAmount?: number,
+        blockNumber?: number,
+    ) => {
+        this._checkCurrentEpoch(epoch)
+        this._checkBlockNumber(blockNumber)
+        this._checkMaxUser()
+
+        let GSTLeaf
+        const USTRoot = await computeInitUserStateRoot(
+            this.setting.userStateTreeDepth,
+            attesterId,
+            airdropAmount
+        )
+        GSTLeaf = hashLeftRight(idCommitment, USTRoot)
+        
+        this._updateGSTree(epoch, GSTLeaf)
+        this.userNum ++
+    }
+
+    /*
+     * Add a new attestation to the list of attestations to the epoch key.
+     */
+    public addAttestation = (
+        epochKey: string,
+        attestation: IAttestation,
+        blockNumber?: number
+    ) => {
+        this._checkBlockNumber(blockNumber)
+        this._checkEpochKeyRange(epochKey)
+        this._isEpochKeySealed(epochKey)
+
+        const attestations = this.epochKeyToAttestationsMap[epochKey]
+        if (!attestations) this.epochKeyToAttestationsMap[epochKey] = []
+        this.epochKeyToAttestationsMap[epochKey].push(attestation)
+        this.epochKeyInEpoch[this.currentEpoch].set(epochKey, true)
+    }
+
+    /*
+    * Add reputation nullifiers to the map state
+    */
+    public addReputationNullifiers = (
+        nullifier: BigInt,
+        blockNumber?: number
+    ) => {
+        this._checkBlockNumber(blockNumber)
+        this._checkNullifier(nullifier)
+
+        this.nullifiers[nullifier.toString()] = true
+    }
+
+    /*
+     * Add the leaves of epoch tree of given epoch and increment current epoch number
+     */
+    public epochTransition = async (
+        epoch: number,
+        blockNumber?: number,
+    ) => {
+        this._checkCurrentEpoch(epoch)
+        this._checkBlockNumber(blockNumber)
+
+        this.epochTree[epoch] = await genNewSMT(
+            this.setting.epochTreeDepth, 
+            SMT_ONE_LEAF
+        )
+        const epochTreeLeaves: IEpochTreeLeaf[] = []
+
+        // seal all epoch keys in current epoch
+        for (let epochKey of this.epochKeyInEpoch[epoch].keys()) {
+            this._checkEpochKeyRange(epochKey)
+            this._isEpochKeySealed(epochKey)
+
+            let hashChain: BigInt = BigInt(0)
+            for (let i = 0; i < this.epochKeyToAttestationsMap[epochKey].length; i++) {
+                hashChain = hashLeftRight(
+                    this.epochKeyToAttestationsMap[epochKey][i].hash(), 
+                    hashChain
+                )
+            }
+            const sealedHashChainResult = hashLeftRight(
+                BigInt(1), 
+                hashChain
+            )
+            const epochTreeLeaf: IEpochTreeLeaf = {
+                epochKey: BigInt(epochKey),
+                hashchainResult: sealedHashChainResult
+            }
+            epochTreeLeaves.push(epochTreeLeaf)
+            this.sealedEpochKey[epochKey] = true
+        }
+
+        // Add to epoch key hash chain map
+        for (let leaf of epochTreeLeaves) {
+            await this.epochTree[epoch].update(
+                leaf.epochKey, 
+                leaf.hashchainResult
+            )
+        }
+        this.epochTreeLeaves[epoch] = epochTreeLeaves.slice()
+        this.epochTreeRoot[epoch] = this.epochTree[epoch].getRootHash()
+        this.currentEpoch ++
+        this.GSTLeaves[this.currentEpoch] = []
+        this.epochKeyInEpoch[this.currentEpoch] = new Map()
+        this.globalStateTree[this.currentEpoch] = new IncrementalQuinTree(
+            this.setting.globalStateTreeDepth,
+            this.defaultGSTLeaf,
+            2,
+        )
+        this.epochGSTRootMap[this.currentEpoch] = new Map()
+    }
+
+    /*
+     * Add a new state leaf to the list of GST leaves in the current epoch.
+     */
+    public userStateTransition = (
+        fromEpoch: number,
+        GSTLeaf: BigInt,
+        nullifiers: BigInt[],
+        blockNumber?: number,
+    ) => {
+        this._checkValidEpoch(fromEpoch)
+        this._checkBlockNumber(blockNumber)
+        assert(
+            nullifiers.length === this.setting.numEpochKeyNoncePerEpoch,
+            `UnirepState: wrong epoch key nullifiers amount. 
+            Expect (${this.setting.numEpochKeyNoncePerEpoch}) nullifiers`
+        )
+
+        // Check if all nullifiers are not duplicated then update Unirep state
+        for (let nullifier of nullifiers) {
+            this._checkNullifier(nullifier)
+        }
+
+        // Update Unirep state when all nullifiers are not submitted before
+        for (let nullifier of nullifiers) {
+            this.nullifiers[nullifier.toString()] = true
+        }
+        this._updateGSTree(this.currentEpoch, GSTLeaf)
     }
 }
 
@@ -365,5 +548,7 @@ export {
     Attestation,
     IAttestation,
     IEpochTreeLeaf,
+    ISettings,
+    IUnirepState,
     UnirepState,
 }

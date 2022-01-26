@@ -1,17 +1,15 @@
+// @ts-ignore
 import { ethers as hardhatEthers } from 'hardhat'
 import { ethers } from 'ethers'
-import { expect } from 'chai'
+import { expect } from "chai"
 import { genRandomSalt, genIdentity, genIdentityCommitment } from '../../crypto'
-import { deployUnirep, getUnirepContract, Attestation } from '../../core'
-
-import { genEpochKey, getTreeDepthsForTesting } from '../../core/utils'
+import { formatProofForSnarkjsVerification } from '../../circuits/utils'
 import { attestingFee, epochLength, maxReputationBudget, numEpochKeyNoncePerEpoch } from '../../config/testLocal'
-import { computeEpochKeyProofHash } from '../utils'
-
+import { getTreeDepthsForTesting } from '../utils'
+import { deployUnirep, EpochKeyProof, Event, Unirep, Attestation, genEpochKey } from '../../core'
 
 describe('EventSequencing', () => {
-    const events = ["NewGSTLeafInserted", "AttestationSubmitted", "EpochEnded"]
-    let expectedEventsInOrder: string[] = []
+    let expectedEventsInOrder: Event[] = []
     let expectedEventsNumber: number = 0
 
     let unirepContract
@@ -36,13 +34,13 @@ describe('EventSequencing', () => {
         let tx = await unirepContract.userSignUp(userCommitment)
         let receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[0])
+        expectedEventsInOrder.push(Event.UserSignedUp)
         expectedEventsNumber ++
 
         // Attester sign up, no events emitted
         attester = accounts[1]
         attesterAddress = await attester.getAddress()
-        unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+        unirepContractCalledByAttester = await hardhatEthers.getContractAt(Unirep.abi, unirepContract.address, attester)
         tx = await unirepContractCalledByAttester.attesterSignUp()
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
@@ -52,16 +50,19 @@ describe('EventSequencing', () => {
         let currentEpoch = await unirepContract.currentEpoch()
         let epochKeyNonce = 0
         let epochKey = genEpochKey(userIds[0].identityNullifier, currentEpoch.toNumber(), epochKeyNonce)
-        const proof: BigInt[] = []
+        const proof: string[] = []
         for (let i = 0; i < 8; i++) {
-            proof.push(BigInt(0))
+            proof.push('0')
         }
-        let epochKeyProof = [genRandomSalt(), currentEpoch, epochKey, proof]
+        let publicSignals = [genRandomSalt(), currentEpoch, epochKey]
+        let epochKeyProof = new EpochKeyProof(
+            publicSignals, 
+            formatProofForSnarkjsVerification(proof)
+        )
         tx = await unirepContract.submitEpochKeyProof(epochKeyProof)
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        const proofNullifier = computeEpochKeyProofHash(epochKeyProof)
-        const epochKeyProofIndex = await unirepContract.getProofIndex(proofNullifier)
+        const epochKeyProofIndex = await unirepContract.getProofIndex(epochKeyProof.hash())
         expect(epochKeyProof).not.equal(null)
 
         // 2. Submit reputation nullifiers
@@ -86,7 +87,7 @@ describe('EventSequencing', () => {
         )
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[1])
+        expectedEventsInOrder.push(Event.AttestationSubmitted)
         expectedEventsNumber ++
 
         // 3. Attest to first user
@@ -106,7 +107,7 @@ describe('EventSequencing', () => {
         )
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[1])
+        expectedEventsInOrder.push(Event.AttestationSubmitted)
         expectedEventsNumber ++
 
         // 4. Second user sign up
@@ -117,7 +118,7 @@ describe('EventSequencing', () => {
         tx = await unirepContract.userSignUp(userCommitment)
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[0])
+        expectedEventsInOrder.push(Event.UserSignedUp)
         expectedEventsNumber ++
 
         // 5. First epoch end
@@ -128,7 +129,7 @@ describe('EventSequencing', () => {
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
         currentEpoch = await unirepContract.currentEpoch()
-        expectedEventsInOrder.push(events[2])
+        expectedEventsInOrder.push(Event.EpochEnded)
         expectedEventsNumber ++
 
         // 6. Second user starts transition
@@ -176,7 +177,7 @@ describe('EventSequencing', () => {
         ], indexes)
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[0])
+        expectedEventsInOrder.push(Event.UserStateTransitioned)
         expectedEventsNumber ++
 
         // 9. Attest to second user
@@ -189,7 +190,11 @@ describe('EventSequencing', () => {
             genRandomSalt(),
             BigInt(signedUpInLeaf),
         )
-        epochKeyProof = [genRandomSalt(), currentEpoch, epochKey, proof]
+        publicSignals = [genRandomSalt(), currentEpoch, epochKey]
+        epochKeyProof = new EpochKeyProof(
+            publicSignals,
+            formatProofForSnarkjsVerification(proof)
+        )
         tx = await unirepContractCalledByAttester.submitAttestation(
             attestation,
             epochKey,
@@ -198,7 +203,7 @@ describe('EventSequencing', () => {
         )
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[1])
+        expectedEventsInOrder.push(Event.AttestationSubmitted)
         expectedEventsNumber ++
 
         // 10. Second epoch end
@@ -207,7 +212,7 @@ describe('EventSequencing', () => {
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
         currentEpoch = await unirepContract.currentEpoch()
-        expectedEventsInOrder.push(events[2])
+        expectedEventsInOrder.push(Event.EpochEnded)
         expectedEventsNumber ++
 
         // 11. Third epoch end
@@ -216,7 +221,7 @@ describe('EventSequencing', () => {
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
         currentEpoch = await unirepContract.currentEpoch()
-        expectedEventsInOrder.push(events[2])
+        expectedEventsInOrder.push(Event.EpochEnded)
         expectedEventsNumber ++
 
         // 12. First user starts transition
@@ -253,7 +258,7 @@ describe('EventSequencing', () => {
         ], indexes)
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[0])
+        expectedEventsInOrder.push(Event.UserStateTransitioned)
         expectedEventsNumber ++
 
         // 15. Second user starts transition
@@ -268,7 +273,6 @@ describe('EventSequencing', () => {
         expect(receipt.status).equal(1)
 
         // 16. Second user processes attestations
-        epochKeyProof = [genRandomSalt(), currentEpoch, epochKey, proof]
         tx = await unirepContract.processAttestations(
             genRandomSalt(),
             genRandomSalt(),
@@ -291,7 +295,7 @@ describe('EventSequencing', () => {
         ], indexes)
         receipt = await tx.wait()
         expect(receipt.status).equal(1)
-        expectedEventsInOrder.push(events[0])
+        expectedEventsInOrder.push(Event.UserStateTransitioned)
         expectedEventsNumber ++
     })
 

@@ -1,9 +1,10 @@
 import { ethers } from 'ethers';
-import { getUnirepContract } from '../core/utils'
+import { EpochKeyProof, getUnirepContract, ReputationProof, SignUpProof, UserTransitionProof } from '../core'
 import { formatProofForVerifierContract } from '../circuits/utils'
 import { DEFAULT_ETH_PROVIDER, } from '../cli/defaults';
-import { checkDeployerProviderConnection, promptPwd, validateEthAddress, validateEthSk } from '../cli/utils';
+import { validateEthAddress } from '../cli/utils';
 import { IAttestation } from '.';
+import { SnarkProof } from '../crypto';
 
 /**
  * An API module of Unirep contracts.
@@ -26,26 +27,18 @@ export class UnirepContract {
         this.contract = getUnirepContract(unirepAddress, this.provider)
     }
 
-    public unlock = async (eth_privkey?: string): Promise<string> => {
-        let ethSk
-        // The deployer's Ethereum private key
-        // The user may either enter it as a command-line option or via the
-        // standard input
-        if (eth_privkey) {
-            ethSk = eth_privkey
-        } else {
-            ethSk = await promptPwd('Your Ethereum private key')
-        }
+    public unlock = async (eth_privkey: string): Promise<string> => {
+        const ethSk = eth_privkey
 
-        if (!validateEthSk(ethSk)) {
-            console.error('Error: invalid Ethereum private key')
-            return ''
-        }
+        // if (!validateEthSk(ethSk)) {
+        //     console.error('Error: invalid Ethereum private key')
+        //     return ''
+        // }
 
-        if (! (await checkDeployerProviderConnection(ethSk, this.url))) {
-            console.error('Error: unable to connect to the Ethereum provider at', this.url)
-            return ''
-        }
+        // if (! (await checkDeployerProviderConnection(ethSk, this.url))) {
+        //     console.error('Error: unable to connect to the Ethereum provider at', this.url)
+        //     return ''
+        // }
         this.signer = new ethers.Wallet(ethSk, this.provider)
         return ethSk
     }
@@ -144,21 +137,25 @@ export class UnirepContract {
             console.log("Error: should connect a signer")
             return
         }
-        let tx
-        try {
-            tx = await this.contract.userSignUp(
-                commitment,
-                { gasLimit: 1000000 }
-            )
+        return await this.contract.userSignUp(
+            commitment,
+            { gasLimit: 1000000 }
+        )
+        // let tx
+        // try {
+        //     tx = await this.contract.userSignUp(
+        //         commitment,
+        //         { gasLimit: 1000000 }
+        //     )
     
-        } catch(e) {
-            console.error('Error: the transaction failed')
-            if (e) {
-                console.error(e)
-            }
-            return tx
-        }
-        return tx
+        // } catch(e) {
+        //     console.error('Error: the transaction failed')
+        //     if (e) {
+        //         console.error(e)
+        //     }
+        //     return tx
+        // }
+        // return tx
     }
 
     public attesterSignUp = async (): Promise<any> => {
@@ -224,7 +221,7 @@ export class UnirepContract {
         return tx
     }
 
-    public submitEpochKeyProof = async(epochKeyProof: BigInt[] | string[]): Promise<any> => {
+    public submitEpochKeyProof = async(epochKeyProof: EpochKeyProof): Promise<any> => {
         if(this.signer != undefined){
             this.contract = this.contract.connect(this.signer)
         } else {
@@ -244,26 +241,23 @@ export class UnirepContract {
         return tx
     }
 
-    public getEpochKeyProofIndex = async (epochKeyProof: any[]): Promise<any> => {
-        const proofNullifier = await this.contract.hashEpochKeyProof(epochKeyProof)
-        return this.contract.getProofIndex(proofNullifier)
+    public getEpochKeyProofIndex = async (epochKeyProof: EpochKeyProof): Promise<any> => {
+        return this.contract.getProofIndex(epochKeyProof.hash())
     }
 
-    public getReputationProofIndex = async (reputationProof: any[]): Promise<any> => {
-        const proofNullifier = await this.contract.hashReputationProof(reputationProof)
-        return this.contract.getProofIndex(proofNullifier)
+    public getReputationProofIndex = async (reputationProof: ReputationProof): Promise<any> => {
+        return this.contract.getProofIndex(reputationProof.hash())
     }
 
-    public getSignUpProofIndex = async (signUpProof: any[]): Promise<any> => {
-        const proofNullifier = await this.contract.hashSignUpProof(signUpProof)
-        return this.contract.getProofIndex(proofNullifier)
+    public getSignUpProofIndex = async (signUpProof: SignUpProof): Promise<any> => {
+        return this.contract.getProofIndex(signUpProof.hash())
     }
 
     public getStartTransitionProofIndex = async (
         blindedUserState: BigInt | string,
         blindedHashChain: BigInt | string,
         GSTreeRoot: BigInt | string,
-        proof: BigInt[] | string[]
+        proof: SnarkProof
     ): Promise<any> => {
         const proofNullifier = await this.contract.hashStartTransitionProof(
             blindedUserState,
@@ -278,7 +272,7 @@ export class UnirepContract {
         outputBlindedUserState: BigInt | string,
         outputBlindedHashChain: BigInt | string,
         inputBlindedUserState: BigInt | string,
-        proof: BigInt[] | string[]
+        proof: SnarkProof
     ): Promise<any> => {
         const proofNullifier = await this.contract.hashProcessAttestationsProof(
             outputBlindedUserState,
@@ -355,18 +349,7 @@ export class UnirepContract {
         return tx
     }
 
-    public spendReputation = async (
-        outputNullifiers: BigInt[] | string [],
-        epoch: number | BigInt | string,
-        epk: number | BigInt | string,
-        GSTRoot: BigInt | string,
-        attesterId: number | BigInt | string,
-        repNullifiersAmount: number | BigInt | string,
-        minRep: number | BigInt | string,
-        proveGraffiti: number | BigInt | string,
-        graffitiPreImage: BigInt | string,
-        proof: any,
-    ): Promise<any> => {
+    public spendReputation = async (reputationProof: ReputationProof): Promise<any> => {
         if(this.signer != undefined){
             this.contract = this.contract.connect(this.signer)
         }
@@ -375,25 +358,16 @@ export class UnirepContract {
             return
         }
         const signerAttesterId = await this.getAttesterId()
-        if(signerAttesterId != attesterId) {
+        if(signerAttesterId != reputationProof.attesterId) {
             console.log("Error: wrong attester ID proof")
             return
         }
         const attestingFee = await this.contract.attestingFee()
         let tx
         try {
-            tx = await this.contract.spendReputation([
-                outputNullifiers,
-                epoch,
-                epk,
-                GSTRoot,
-                attesterId,
-                repNullifiersAmount,
-                minRep,
-                proveGraffiti,
-                graffitiPreImage,
-                proof
-                ],{ value: attestingFee, gasLimit: 1000000 }
+            tx = await this.contract.spendReputation(
+                reputationProof,
+                { value: attestingFee, gasLimit: 1000000 }
             )
         } catch(e) {
             console.error('Error: the transaction failed')
@@ -406,11 +380,7 @@ export class UnirepContract {
     }
 
     public airdropEpochKey = async(
-        epoch: number | BigInt | string,
-        epk: number | BigInt | string,
-        GSTRoot: BigInt | string,
-        attesterId: number | BigInt | string,
-        proof: any,
+        userSignUpProof: SignUpProof
     ): Promise<any> => {
         if(this.signer != undefined){
             this.contract = this.contract.connect(this.signer)
@@ -422,13 +392,9 @@ export class UnirepContract {
         const attestingFee = await this.contract.attestingFee()
         let tx
         try {
-            tx = await this.contract.airdropEpochKey([
-                epoch,
-                epk,
-                GSTRoot,
-                attesterId,
-                proof
-                ],{ value: attestingFee, gasLimit: 1000000 }
+            tx = await this.contract.airdropEpochKey(
+                userSignUpProof,
+                { value: attestingFee, gasLimit: 1000000 }
             )
         } catch(e) {
             console.error('Error: the transaction failed')
@@ -466,7 +432,11 @@ export class UnirepContract {
         return tx
     }
 
-    public startUserStateTransition = async (blindedUserState: BigInt | string, blindedHashChain: BigInt | string, GSTRoot: BigInt | string, proof: any): Promise<any> => {
+    public startUserStateTransition = async (
+        blindedUserState: BigInt | string, 
+        blindedHashChain: BigInt | string, GSTRoot: 
+        BigInt | string, proof: any
+    ): Promise<any> => {
         if(this.signer != undefined){
             this.contract = this.contract.connect(this.signer)
         }
@@ -491,7 +461,12 @@ export class UnirepContract {
         return tx
     }
 
-    public processAttestations = async (outputBlindedUserState: BigInt | string, outputBlindedHashChain: BigInt | string, inputBlindedUserState: BigInt | string, proof: any): Promise<any> => {
+    public processAttestations = async (
+        outputBlindedUserState: BigInt | string, 
+        outputBlindedHashChain: BigInt | string, inputBlindedUserState: 
+        BigInt | string, 
+        proof: any
+    ): Promise<any> => {
         if(this.signer != undefined){
             this.contract = this.contract.connect(this.signer)
         }
@@ -517,14 +492,7 @@ export class UnirepContract {
     }
 
     public updateUserStateRoot = async ( 
-        newGSTLeaf: BigInt | string, 
-        epochKeyNullifiers: BigInt[] | string[],
-        blindedUserStates: BigInt[] | string[],
-        blindedHashChains: BigInt[] | string[],
-        transitionedFromEpoch: BigInt | number | string,
-        fromGSTRoot: BigInt | string,
-        fromEpochTree: BigInt | string,
-        proof: any,
+        USTProof: UserTransitionProof,
         proofIndexes: BigInt[] | string [],
     ): Promise<any> => {
         if(this.signer != undefined){
@@ -536,16 +504,10 @@ export class UnirepContract {
         }
         let tx
         try {
-            tx = await this.contract.updateUserStateRoot([
-                newGSTLeaf,
-                epochKeyNullifiers,
-                transitionedFromEpoch,
-                blindedUserStates,
-                fromGSTRoot,
-                blindedHashChains,
-                fromEpochTree,
-                formatProofForVerifierContract(proof),
-            ], proofIndexes)
+            tx = await this.contract.updateUserStateRoot(
+                USTProof, 
+                proofIndexes
+            )
         } catch(e) {
             console.error('Error: the transaction failed')
             if (e) {
@@ -556,17 +518,9 @@ export class UnirepContract {
     }
 
     public verifyEpochKeyValidity = async (
-        GSTRoot: BigInt,
-        currentEpoch: number,
-        epk: BigInt,
-        proof: any,
+        epochKeyProof: EpochKeyProof
     ): Promise<boolean> => {
-        return this.contract.verifyEpochKeyValidity(
-            GSTRoot,
-            currentEpoch,
-            epk,
-            proof,
-        )
+        return this.contract.verifyEpochKeyValidity(epochKeyProof)
     }
 
     public verifyStartTransitionProof = async (
@@ -598,67 +552,21 @@ export class UnirepContract {
     }
 
     public verifyUserStateTransition = async (
-        newGSTLeaf: BigInt | string,
-        epkNullifiers: BigInt[] | string[],
-        fromEpoch: number | BigInt | string,
-        blindedUserStates: BigInt[] | string[],
-        fromGlobalStateTree: BigInt | string,
-        blindedHashChains: BigInt[] | string[],
-        fromEpochTree: BigInt | string,
-        proof: any,
+        USTProof: UserTransitionProof
     ): Promise<boolean> => {
-        return this.contract.verifyUserStateTransition(
-            newGSTLeaf,
-            epkNullifiers,
-            fromEpoch,
-            blindedUserStates,
-            fromGlobalStateTree,
-            blindedHashChains,
-            fromEpochTree,
-            proof,
-        )
+        return this.contract.verifyUserStateTransition(USTProof)
     }
 
     public verifyReputation = async (
-        outputNullifiers: BigInt[] | string [],
-        epoch: number | BigInt | string,
-        epk: number | BigInt | string,
-        GSTRoot: BigInt | string,
-        attesterId: number | BigInt | string,
-        repNullifiersAmount: number | BigInt | string,
-        minRep: number | BigInt | string,
-        proveGraffiti: number | BigInt | string,
-        graffitiPreImage: BigInt | string,
-        proof: any,
+        reputationProof: ReputationProof
     ): Promise<boolean> => {
-        return this.contract.verifyReputation(
-            outputNullifiers,
-            epoch,
-            epk,
-            GSTRoot,
-            attesterId,
-            repNullifiersAmount,
-            minRep,
-            proveGraffiti,
-            graffitiPreImage,
-            proof,
-        )
+        return this.contract.verifyReputation(reputationProof)
     }
 
     public verifyUserSignUp = async (
-        epoch: number | BigInt | string,
-        epk: number | BigInt | string,
-        GSTRoot: BigInt | string,
-        attesterId: number | BigInt | string,
-        proof: any,
+        signUpProof: SignUpProof
     ): Promise<boolean> => {
-        return this.contract.verifyUserSignUp(
-            epoch,
-            epk,
-            GSTRoot,
-            attesterId,
-            proof,
-        )
+        return this.contract.verifyUserSignUp(signUpProof)
     }
 
     public hashedBlankStateLeaf = async (): Promise<any> => {

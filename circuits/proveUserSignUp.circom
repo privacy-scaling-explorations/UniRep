@@ -1,3 +1,10 @@
+/*
+    Prove: 
+        1. if user has a leaf in an existed global state tree
+        2. user state tree has a `sign_up` flag given by the attester
+        3. output an epoch key with nonce = 0 (ensure one epoch key per user per epoch)
+*/
+
 include "../node_modules/circomlib/circuits/mux1.circom";
 include "./hasherPoseidon.circom";
 include "./sparseMerkleTree.circom";
@@ -22,7 +29,7 @@ template ProveUserSignUp(GST_tree_depth, user_state_tree_depth, epoch_tree_depth
     signal private input pos_rep;
     signal private input neg_rep;
     signal private input graffiti;
-    signal private input sign_up;
+    signal input sign_up; // indicate if the user has signed up in the attester's app or not
     signal private input UST_path_elements[user_state_tree_depth][1];
 
     /* 1. Check if user exists in the Global State Tree and verify epoch key */
@@ -60,8 +67,4 @@ template ProveUserSignUp(GST_tree_depth, user_state_tree_depth, epoch_tree_depth
     }
     reputation_membership_check.root <== user_tree_root;
     /* End of check 2 */
-
-    /* 3. Check if user has signed up in the attester's app */
-    sign_up === 1;
-    /* End of check 3 */
 }

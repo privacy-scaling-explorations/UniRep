@@ -1,9 +1,11 @@
 import base64url from 'base64url'
 import { ethers } from 'ethers'
 
-import { DEFAULT_ETH_PROVIDER, DEFAULT_START_BLOCK } from './defaults'
+import { DEFAULT_ETH_PROVIDER } from './defaults'
 import { genUnirepStateFromContract, UnirepContract } from '../core'
 import { signUpProofPrefix, signUpPublicSignalsPrefix } from './prefix'
+import { SignUpProof } from '../core'
+import { formatProofForSnarkjsVerification } from '../circuits/utils'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
@@ -48,15 +50,6 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
-        '-b', '--start-block',
-        {
-            action: 'store',
-            type: 'int',
-            help: 'The block the Unirep contract is deployed. Default: 0',
-        }
-    )
-
-    parser.add_argument(
         '-x', '--contract',
         {
             required: true,
@@ -75,11 +68,9 @@ const verifyUserSignUpProof = async (args: any) => {
     // Unirep contract
     const unirepContract = new UnirepContract(args.contract, ethProvider)
 
-    const startBlock = (args.start_block) ? args.start_block : DEFAULT_START_BLOCK
     const unirepState = await genUnirepStateFromContract(
         provider,
         args.contract,
-        startBlock,
     )
 
     // Parse Inputs
@@ -90,6 +81,7 @@ const verifyUserSignUpProof = async (args: any) => {
     const epk = publicSignals[1]
     const GSTRoot = publicSignals[2]
     const attesterId = publicSignals[3]
+    const userHasSignedUp = publicSignals[4]
     const proof = JSON.parse(decodedProof)
 
     // Check if Global state tree root exists
@@ -100,13 +92,11 @@ const verifyUserSignUpProof = async (args: any) => {
     }
 
     // Verify the proof on-chain
-    const isProofValid = await unirepContract.verifyUserSignUp(
-        epoch,
-        epk,
-        GSTRoot,
-        attesterId,
-        proof,
+    const signUpProof = new SignUpProof(
+        publicSignals,
+        formatProofForSnarkjsVerification(proof)
     )
+    const isProofValid = await unirepContract.verifyUserSignUp(signUpProof)
     if (!isProofValid) {
         console.error('Error: invalid user sign up proof')
         return

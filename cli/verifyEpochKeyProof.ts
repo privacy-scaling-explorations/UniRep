@@ -1,9 +1,11 @@
 import base64url from 'base64url'
 import { ethers } from 'ethers'
 
-import { DEFAULT_ETH_PROVIDER, DEFAULT_START_BLOCK } from './defaults'
+import { DEFAULT_ETH_PROVIDER } from './defaults'
 import { genUnirepStateFromContract, UnirepContract } from '../core'
 import { epkProofPrefix, epkPublicSignalsPrefix } from './prefix'
+import { EpochKeyProof } from '../core'
+import { formatProofForSnarkjsVerification } from '../circuits/utils'
 
 
 const configureSubparser = (subparsers: any) => {
@@ -40,15 +42,6 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
-        '-b', '--start-block',
-        {
-            action: 'store',
-            type: 'int',
-            help: 'The block the Unirep contract is deployed. Default: 0',
-        }
-    )
-
-    parser.add_argument(
         '-x', '--contract',
         {
             required: true,
@@ -67,11 +60,9 @@ const verifyEpochKeyProof = async (args: any) => {
     // Unirep contract
     const unirepContract = new UnirepContract(args.contract, ethProvider)
     
-    const startBlock = (args.start_block) ? args.start_block : DEFAULT_START_BLOCK
     const unirepState = await genUnirepStateFromContract(
         provider,
         args.contract,
-        startBlock,
     )
     
     const decodedProof = base64url.decode(args.proof.slice(epkProofPrefix.length))
@@ -95,12 +86,11 @@ const verifyEpochKeyProof = async (args: any) => {
     }
     
     // Verify the proof on-chain
-    const isProofValid = await unirepContract.verifyEpochKeyValidity(
-        GSTRoot,
-        inputEpoch,
-        epk,
-        proof,
+    const epkProof: EpochKeyProof = new EpochKeyProof(
+        publicSignals,
+        formatProofForSnarkjsVerification(proof),
     )
+    const isProofValid = await unirepContract.verifyEpochKeyValidity(epkProof)
     if (!isProofValid) {
         console.error('Error: invalid epoch key proof')
         return

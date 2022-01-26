@@ -1,6 +1,6 @@
 import base64url from 'base64url'
-
 import { genIdentity, genIdentityCommitment, serialiseIdentity } from '../crypto'
+
 import { identityPrefix, identityCommitmentPrefix } from "./prefix"
 
 const configureSubparser = (subparsers: any) => {

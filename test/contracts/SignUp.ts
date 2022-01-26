@@ -1,26 +1,25 @@
+// @ts-ignore
 import { ethers as hardhatEthers } from 'hardhat'
-import { BigNumber, ethers } from 'ethers'
-import { expect } from 'chai'
-import { IncrementalQuinTree, genIdentity, genIdentityCommitment } from '../../crypto'
-import { deployUnirep, getUnirepContract } from '../../core'
+import { ethers } from 'ethers'
+import { expect } from "chai"
+import { genIdentity, genIdentityCommitment } from '../../crypto'
 
-import { attestingFee, epochLength, epochTreeDepth, globalStateTreeDepth, numEpochKeyNoncePerEpoch, userStateTreeDepth, maxReputationBudget} from '../../config/testLocal'
-import { getTreeDepthsForTesting } from '../../core/utils'
-import { genNewUserStateTree } from '../utils'
-
+import { attestingFee, epochLength, circuitGlobalStateTreeDepth, numEpochKeyNoncePerEpoch, circuitUserStateTreeDepth, circuitEpochTreeDepth, maxReputationBudget} from '../../config/testLocal'
+import { deployUnirep } from '../../core'
+import { getTreeDepthsForTesting } from '../utils'
 
 describe('Signup', () => {
     const testMaxUser = 5
     let unirepContract
-    let GSTree
-    let emptyUserStateRoot
-
     let accounts: ethers.Signer[]
+
+    let signedUpUsers = 0
+    let signedUpAttesters = 0
     
     before(async () => {
         accounts = await hardhatEthers.getSigners()
 
-        const _treeDepths = getTreeDepthsForTesting("contract")
+        const _treeDepths = getTreeDepthsForTesting()
         // Set maxUsers to testMaxUser
         const _settings = {
             maxUsers: testMaxUser,
@@ -31,9 +30,6 @@ describe('Signup', () => {
             attestingFee: attestingFee
         }
         unirepContract = await deployUnirep(<ethers.Wallet>accounts[0], _treeDepths, _settings)
-
-        const blankGSLeaf = await unirepContract.hashedBlankStateLeaf()
-        GSTree = new IncrementalQuinTree(globalStateTreeDepth, blankGSLeaf, 2)
     })
 
     it('should have the correct config value', async () => {
@@ -47,18 +43,9 @@ describe('Signup', () => {
         expect(testMaxUser).equal(maxUsers_)
 
         const treeDepths_ = await unirepContract.treeDepths()
-        expect(epochTreeDepth).equal(treeDepths_.epochTreeDepth)
-        expect(globalStateTreeDepth).equal(treeDepths_.globalStateTreeDepth)
-        expect(userStateTreeDepth).equal(treeDepths_.userStateTreeDepth)
-    })
-
-    it('should have the correct default value', async () => {
-        const emptyUSTree = await genNewUserStateTree("contract")
-        emptyUserStateRoot = await unirepContract.emptyUserStateRoot()
-        expect(BigNumber.from(emptyUSTree.getRootHash())).equal(emptyUserStateRoot)
-
-        const emptyGlobalStateTreeRoot = await unirepContract.emptyGlobalStateTreeRoot()
-        expect(BigNumber.from(GSTree.root)).equal(emptyGlobalStateTreeRoot)
+        expect(circuitEpochTreeDepth).equal(treeDepths_.epochTreeDepth)
+        expect(circuitGlobalStateTreeDepth).equal(treeDepths_.globalStateTreeDepth)
+        expect(circuitUserStateTreeDepth).equal(treeDepths_.userStateTreeDepth)
     })
 
     describe('User sign-ups', () => {
@@ -70,12 +57,10 @@ describe('Signup', () => {
             const receipt = await tx.wait()
 
             expect(receipt.status).equal(1)
+            signedUpUsers ++
 
             const numUserSignUps_ = await unirepContract.numUserSignUps()
-            expect(1).equal(numUserSignUps_)
-
-            const hashedStateLeaf = await unirepContract.hashStateLeaf([commitment, emptyUserStateRoot])
-            GSTree.insert(hashedStateLeaf)
+            expect(signedUpUsers).equal(numUserSignUps_)
         })
 
         it('double sign up should fail', async () => {
@@ -90,6 +75,10 @@ describe('Signup', () => {
                 )
                 let receipt = await tx.wait()
                 expect(receipt.status).equal(1)
+                signedUpUsers ++
+
+                const numUserSignUps_ = await unirepContract.numUserSignUps()
+                expect(signedUpUsers).equal(numUserSignUps_)
             }
             await expect(unirepContract.userSignUp(genIdentityCommitment(genIdentity())))
                 .to.be.revertedWith('Unirep: maximum number of user signups reached')
@@ -107,21 +96,23 @@ describe('Signup', () => {
         it('sign up should succeed', async () => {
             attester = accounts[1]
             attesterAddress = await attester.getAddress()
-            unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+            unirepContractCalledByAttester = unirepContract.connect(attester)
             const tx = await unirepContractCalledByAttester.attesterSignUp()
             const receipt = await tx.wait()
 
             expect(receipt.status).equal(1)
+            signedUpAttesters ++
 
             const attesterId = await unirepContract.attesters(attesterAddress)
-            expect(1).equal(attesterId)
+            expect(signedUpAttesters).equal(attesterId)
             const nextAttesterId_ = await unirepContract.nextAttesterId()
             // nextAttesterId starts with 1 so now it should be 2
-            expect(2).equal(nextAttesterId_)
+            expect(signedUpAttesters+1).equal(nextAttesterId_)
         })
 
         it('sign up via relayer should succeed', async () => {
             let relayer = accounts[0]
+            unirepContract.connect(relayer)
             attester2 = accounts[2]
             attester2Address = await attester2.getAddress()
 
@@ -131,11 +122,12 @@ describe('Signup', () => {
             const receipt = await tx.wait()
             
             expect(receipt.status).equal(1)
+            signedUpAttesters ++
 
             const attesterId = await unirepContract.attesters(attester2Address)
-            expect(2).equal(attesterId)
+            expect(signedUpAttesters).equal(attesterId)
             const nextAttesterId_ = await unirepContract.nextAttesterId()
-            expect(3).equal(nextAttesterId_)
+            expect(signedUpAttesters+1).equal(nextAttesterId_)
         })
 
         it('sign up with invalid signature should fail', async () => {
@@ -157,15 +149,20 @@ describe('Signup', () => {
             for (let i = 3; i < testMaxUser; i++) {
                 attester = accounts[i]
                 attesterAddress = await attester.getAddress()
-                unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+                unirepContractCalledByAttester = unirepContract.connect(attester)
                 const tx = await unirepContractCalledByAttester.attesterSignUp()
                 const receipt = await tx.wait()
-
                 expect(receipt.status).equal(1)
+                signedUpAttesters ++
+
+                const attesterId = await unirepContract.attesters(attesterAddress)
+                expect(signedUpAttesters).equal(attesterId)
+                const nextAttesterId_ = await unirepContract.nextAttesterId()
+                expect(signedUpAttesters+1).equal(nextAttesterId_)
             }
             attester = accounts[5]
             attesterAddress = await attester.getAddress()
-            unirepContractCalledByAttester = getUnirepContract(unirepContract.address, attester)
+            unirepContractCalledByAttester = unirepContract.connect(attester)
             await expect(unirepContractCalledByAttester.attesterSignUp())
                 .to.be.revertedWith('Unirep: maximum number of attester signups reached')
         })

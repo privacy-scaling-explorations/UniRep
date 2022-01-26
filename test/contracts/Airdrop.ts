@@ -1,32 +1,24 @@
+// @ts-ignore
 import { ethers as hardhatEthers } from 'hardhat'
 import { ethers } from 'ethers'
-import { expect } from 'chai'
-import { genRandomSalt, hash5, hashLeftRight, genIdentity, genIdentityCommitment } from '../../crypto'
-import { formatProofForVerifierContract, verifyProof } from '../../circuits/utils'
+import { expect } from "chai"
+import { genIdentity, genIdentityCommitment, hashLeftRight, IncrementalQuinTree } from '../../crypto'
+import { Circuit } from '../../circuits/utils'
 
-import { attestingFee, circuitUserStateTreeDepth, epochLength, maxAttesters, maxReputationBudget, maxUsers, numEpochKeyNoncePerEpoch } from '../../config/testLocal'
-import { getTreeDepthsForTesting } from '../../core/utils'
-import { Attestation, IEpochTreeLeaf, UnirepState, UserState, deployUnirep } from '../../core'
-import { genNewSMT } from '../utils'
+import { attestingFee, epochLength, maxUsers, numEpochKeyNoncePerEpoch, maxReputationBudget, maxAttesters, circuitGlobalStateTreeDepth } from '../../config/testLocal'
+import { getTreeDepthsForTesting, genProofAndVerify, genReputationCircuitInput, genProveSignUpCircuitInput, genInputForContract, GSTZERO_VALUE, genNewUserStateTree } from '../utils'
+import { deployUnirep, Reputation } from '../../core'
 
 describe('Airdrop', function () {
     this.timeout(100000)
 
     let unirepContract
-    let unirepState
-    let userState
-
     let accounts: ethers.Signer[]
 
-    let numLeaf = 0
-
-    let attester, attesterAddress, attesterId, unirepContractCalledByAttester
-    let attester2, attester2Address, attester2Id, unirepContractCalledByAttester2
-
+    let numUsers = 0
+    let attesterAddress, unirepContractCalledByAttester
     const airdropPosRep = 20
-    const repNullifiersAmount = 0
     const epkNonce = 0
-    const proofIndexes: BigInt[] = []
 
     before(async () => {
         accounts = await hardhatEthers.getSigners()
@@ -41,427 +33,186 @@ describe('Airdrop', function () {
             attestingFee: attestingFee
         }
         unirepContract = await deployUnirep(<ethers.Wallet>accounts[0], _treeDepths, _settings)
-        unirepState = new UnirepState(
-            _treeDepths.globalStateTreeDepth,
-            _treeDepths.userStateTreeDepth,
-            _treeDepths.epochTreeDepth,
-            attestingFee,
-            epochLength,
-            numEpochKeyNoncePerEpoch,
-            maxReputationBudget,
-        )
     })
 
-    it('compute SMT root should succeed', async () => {
-        const leafIdx = BigInt(Math.floor(Math.random() * (2** circuitUserStateTreeDepth)))
-        const leafValue = genRandomSalt()
-        const oneLeafUSTRoot = await unirepContract.calcAirdropUSTRoot(leafIdx, leafValue)
-
-        const defaultLeafHash = hash5([])
-        const tree = await genNewSMT(circuitUserStateTreeDepth, defaultLeafHash)
-        await tree.update(leafIdx, leafValue)
-        const SMTRoot = await tree.getRootHash()
-
-        expect(oneLeafUSTRoot, 'airdrop root does not match').equal(SMTRoot)
-    })
-
-    it('attester signs up and attester sets airdrop amount should succeed', async() => {
-        console.log('Attesters sign up')
-        attester = accounts[1]
-        attesterAddress = await attester.getAddress()
-        unirepContractCalledByAttester = unirepContract.connect(attester)
-        let tx = await unirepContractCalledByAttester.attesterSignUp()
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-        attesterId = await unirepContract.attesters(attesterAddress)
-        // Sign up another attester
-        attester2 = accounts[2]
-        attester2Address = await attester2.getAddress()
-        unirepContractCalledByAttester2 = unirepContract.connect(attester2)
-        tx = await unirepContractCalledByAttester2.attesterSignUp()
-        receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-        attester2Id = await unirepContract.attesters(attester2Address)
-
-        console.log('attesters set airdrop amount')
-        tx = await unirepContractCalledByAttester.setAirdropAmount(airdropPosRep)
-        receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-        const airdroppedAmount = await unirepContract.airdropAmount(attesterAddress)
-        expect(airdroppedAmount.toNumber()).equal(airdropPosRep)
-    })
-
-    it('user signs up through attester should get airdrop pos rep', async() => {
-        console.log('User sign up')
-        const userId = genIdentity()
-        const userCommitment = genIdentityCommitment(userId)
-        let tx = await unirepContractCalledByAttester.userSignUp(userCommitment)
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-
-        const newGSTLeafInsertedFilter = unirepContract.filters.NewGSTLeafInserted()
-        const newGSTLeafInsertedEvents =  await unirepContract.queryFilter(newGSTLeafInsertedFilter)
-        const newGSTLeaf = newGSTLeafInsertedEvents[numLeaf].args._hashedLeaf
-        numLeaf ++
-
-        // expected airdropped user state
-        const defaultLeafHash = hash5([])
-        const leafValue = hash5([BigInt(airdropPosRep), BigInt(0), BigInt(0), BigInt(1)])
-        const tree = await genNewSMT(circuitUserStateTreeDepth, defaultLeafHash)
-        await tree.update(BigInt(attesterId), leafValue)
-        const SMTRoot = await tree.getRootHash()
-        const hashedLeaf = hashLeftRight(userCommitment, SMTRoot)
-        expect(newGSTLeaf).equal(hashedLeaf)
-
-        // user can prove airdrop pos rep
-        const currentEpoch = await unirepContract.currentEpoch()
-
-        unirepState.signUp(currentEpoch.toNumber(), BigInt(newGSTLeaf))
-        userState = new UserState(
-            unirepState,
-            userId,
-            userCommitment,
-            false,
-        )
-        const latestTransitionedToEpoch = currentEpoch.toNumber()
-        const GSTreeLeafIndex = 0
-        userState.signUp(latestTransitionedToEpoch, GSTreeLeafIndex, attesterId, airdropPosRep)
-        const proveGraffiti = 0
-        const minPosRep = 19, graffitiPreImage = 0
-        const results = await userState.genProveReputationProof(BigInt(attesterId), repNullifiersAmount, epkNonce, minPosRep, proveGraffiti, graffitiPreImage)
-        const isValid = await verifyProof('proveReputation', results.proof, results.publicSignals)
-        expect(isValid, 'Verify reputation proof off-chain failed').to.be.true
-    })
-
-    it('user can get airdrop positive reputation through calling airdrop function in Unirep', async() => {
-        const results = await userState.genUserSignUpProof(BigInt(attesterId))
-        const isValid = await verifyProof('proveUserSignUp', results.proof, results.publicSignals)
-        expect(isValid, 'Verify user sign up proof off-chain failed').to.be.true
-        const userSignUpProof = results.publicSignals.concat([formatProofForVerifierContract(results.proof)])
-
-        let tx = await unirepContractCalledByAttester.airdropEpochKey(userSignUpProof, {value: attestingFee})
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-
-        const attestationToEpochKey = new Attestation(
-            BigInt(attesterId),
-            BigInt(airdropPosRep),
-            BigInt(0),
-            BigInt(0),
-            BigInt(1),
-        )
-        unirepState.addAttestation(results.epochKey, attestationToEpochKey)
-    })
-
-    it('epoch transition should succeed', async () => {
-        // Record data before epoch transition so as to compare them with data after epoch transition
-        let epoch = await unirepContract.currentEpoch()
-
-        // Fast-forward epochLength of seconds
-        await hardhatEthers.provider.send("evm_increaseTime", [epochLength])
-        // Assert no epoch transition compensation is dispensed to volunteer
-        expect(await unirepContract.epochTransitionCompensation(attesterAddress)).to.be.equal(0)
-        // Begin epoch transition 
-        let tx = await unirepContractCalledByAttester.beginEpochTransition()
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
-        console.log("Gas cost of sealing one epoch key:", receipt.gasUsed.toString())
-        // Verify compensation to the volunteer increased
-        expect(await unirepContract.epochTransitionCompensation(attesterAddress)).to.gt(0)
-
-        // Complete epoch transition
-        expect(await unirepContract.currentEpoch()).to.be.equal(epoch.add(1))
-
-        // Verify latestEpochTransitionTime and currentEpoch
-        let latestEpochTransitionTime = await unirepContract.latestEpochTransitionTime()
-        expect(latestEpochTransitionTime).equal((await hardhatEthers.provider.getBlock(receipt.blockNumber)).timestamp)
-
-        let epoch_ = await unirepContract.currentEpoch()
-        expect(epoch_).equal(epoch.add(1))
-
-        // Unirep and user state transition from the first epoch
-        const epochTreeLeaves: IEpochTreeLeaf[] = []
-
-        // Generate valid epoch tree leaves
-        const attestationSubmittedFilter = unirepContract.filters.AttestationSubmitted(epoch)
-        const attestationSubmittedEvents =  await unirepContract.queryFilter(attestationSubmittedFilter)
-        const attestationMap = {}
-
-        // compute hash chain of valid epoch key
-        for (let i = 0; i < attestationSubmittedEvents.length; i++) {
-            const proofIndex = attestationSubmittedEvents[i].args?._proofIndex
-            const epochKeyProofFilter = unirepContract.filters.EpochKeyProof(proofIndex)
-            const epochKeyProofEvent = await unirepContract.queryFilter(epochKeyProofFilter)
-            const repProofFilter = unirepContract.filters.ReputationNullifierProof(proofIndex)
-            const repProofEvent = await unirepContract.queryFilter(repProofFilter)
-            const signUpProofFilter = unirepContract.filters.UserSignedUpProof(proofIndex)
-            const signUpProofEvent = await unirepContract.queryFilter(signUpProofFilter)
-
-            let isProofValid
-            // Should find ReputationNullifierProof as well
-            // Should find UserSignedUpProof as well
-            if (epochKeyProofEvent.length == 1){
-                console.log('epoch key event')
-                const args = epochKeyProofEvent[0]?.args?.epochKeyProofData
-                isProofValid = await unirepContract.verifyEpochKeyValidity(
-                    args?.globalStateTree,
-                    args?.epoch,
-                    args?.epochKey,
-                    args?.proof,
-                )
-            } else if (repProofEvent.length == 1){
-                console.log('rep nullifier event')
-                const args = repProofEvent[0]?.args?.reputationProofData
-                isProofValid = await unirepContract.verifyReputation(
-                    args?.repNullifiers,
-                    args?.epoch,
-                    args?.epochKey,
-                    args?.globalStateTree,
-                    args?.attesterId,
-                    args?.proveReputationAmount,
-                    args?.minRep,
-                    args?.proveGraffiti,
-                    args?.graffitiPreImage,
-                    args?.proof,
-                )
-            } else if (signUpProofEvent.length == 1){
-                console.log('sign up event')
-                const args = signUpProofEvent[0]?.args?.signUpProofData
-                isProofValid = await unirepContract.verifyUserSignUp(
-                    args?.epoch,
-                    args?.epochKey,
-                    args?.globalStateTree,
-                    args?.attesterId,
-                    args?.proof,
-                )
+    describe('Attesters set airdrop', () => {
+        it('attester signs up and attester sets airdrop amount should succeed', async() => {
+            console.log('Attesters sign up')
+    
+            for (let i = 0; i < 2; i++) {
+                unirepContractCalledByAttester = unirepContract.connect(accounts[i])
+                const tx = await unirepContractCalledByAttester.attesterSignUp()
+                const receipt = await tx.wait()
+                expect(receipt.status).equal(1)
             }
-
-            if(isProofValid) {
-                const epochKey = attestationSubmittedEvents[i].args?._epochKey
-                const _attestation = attestationSubmittedEvents[i].args?.attestation
-                if(attestationMap[epochKey] == undefined) {
-                    attestationMap[epochKey] = BigInt(0)
-                } 
-                const attestation = new Attestation(
-                    BigInt(_attestation?.attesterId.toString()),
-                    BigInt(_attestation?.posRep.toString()),
-                    BigInt(_attestation?.negRep.toString()),
-                    BigInt(_attestation?.graffiti.toString()),
-                    BigInt(_attestation?.signUp.toString()),
-                )
-                attestationMap[epochKey] = hashLeftRight(
-                    attestation.hash(), 
-                    attestationMap[epochKey]
-                )
-            }
-        }
-
-        // seal hash chain
-        for(let k in attestationMap) {
-            attestationMap[k] = hashLeftRight(BigInt(1), attestationMap[k])
-            const epochTreeLeaf: IEpochTreeLeaf = {
-                epochKey: BigInt(k),
-                hashchainResult: attestationMap[k]
-            }
-            epochTreeLeaves.push(epochTreeLeaf)
-        }
-
-        await unirepState.epochTransition(epoch, epochTreeLeaves)
-    })
-
-    it('user should perform user state transition', async() => {
-        let results = await userState.genUserStateTransitionProofs()
-        let isValid = await verifyProof('startTransition', results.startTransitionProof.proof, results.startTransitionProof.publicSignals)
-        expect(isValid, 'Verify start transition circuit off-chain failed').to.be.true
-
-        // Verify start transition proof on-chain
-        let isProofValid = await unirepContract.verifyStartTransitionProof(
-            results.startTransitionProof.blindedUserState,
-            results.startTransitionProof.blindedHashChain,
-            results.startTransitionProof.globalStateTreeRoot,
-            formatProofForVerifierContract(results.startTransitionProof.proof),
-        )
-        expect(isProofValid, 'Verify start transition circuit on-chain failed').to.be.true
-
-        const blindedUserState = results.startTransitionProof.blindedUserState
-        const blindedHashChain = results.startTransitionProof.blindedHashChain
-        const GSTreeRoot = results.startTransitionProof.globalStateTreeRoot
-        const proof = formatProofForVerifierContract(results.startTransitionProof.proof)
-
-        let tx = await unirepContract.startUserStateTransition(
-            blindedUserState,
-            blindedHashChain,
-            GSTreeRoot,
-            proof
-        )
-        let receipt = await tx.wait()
-        expect(receipt.status, 'Submit user state transition proof failed').to.equal(1)
-        console.log("Gas cost of submit a start transition proof:", receipt.gasUsed.toString())
-
-        let proofNullifier = await unirepContract.hashStartTransitionProof(
-            blindedUserState,
-            blindedHashChain,
-            GSTreeRoot,
-            proof
-        )
-        let proofIndex = await unirepContract.getProofIndex(proofNullifier)
-        proofIndexes.push(BigInt(proofIndex))
-
-        for (let i = 0; i < results.processAttestationProofs.length; i++) {
-            const isValid = await verifyProof('processAttestations', results.processAttestationProofs[i].proof, results.processAttestationProofs[i].publicSignals)
-            expect(isValid, 'Verify process attestations circuit off-chain failed').to.be.true
-
-            const outputBlindedUserState = results.processAttestationProofs[i].outputBlindedUserState
-            const outputBlindedHashChain = results.processAttestationProofs[i].outputBlindedHashChain
-            const inputBlindedUserState = results.processAttestationProofs[i].inputBlindedUserState
-
-            // Verify processAttestations proof on-chain
-            const isProofValid = await unirepContract.verifyProcessAttestationProof(
-                outputBlindedUserState,
-                outputBlindedHashChain,
-                inputBlindedUserState,
-                formatProofForVerifierContract(results.processAttestationProofs[i].proof),
-            )
-            expect(isProofValid, 'Verify process attestations circuit on-chain failed').to.be.true
-
-            const tx = await unirepContract.processAttestations(
-                outputBlindedUserState,
-                outputBlindedHashChain,
-                inputBlindedUserState,
-                formatProofForVerifierContract(results.processAttestationProofs[i].proof),
-            )
+    
+            console.log('attesters set airdrop amount')
+            unirepContractCalledByAttester = unirepContract.connect(accounts[0])
+            attesterAddress = await accounts[0].getAddress()
+            const tx = await unirepContractCalledByAttester.setAirdropAmount(airdropPosRep)
             const receipt = await tx.wait()
-            expect(receipt.status, 'Submit process attestations proof failed').to.equal(1)
-            console.log("Gas cost of submit a process attestations proof:", receipt.gasUsed.toString())
+            expect(receipt.status).equal(1)
+            const airdroppedAmount = await unirepContractCalledByAttester.airdropAmount(attesterAddress)
+            expect(airdroppedAmount.toNumber()).equal(airdropPosRep)
+        })
+    
+        it('non-signup attester cannot set airdrop amount', async() => {
+            unirepContractCalledByAttester = unirepContract.connect(accounts[2])
+            await expect(unirepContractCalledByAttester.setAirdropAmount(airdropPosRep))
+                .to.be.revertedWith('Unirep: attester has not signed up yet')
+        })
 
-            const proofNullifier = await unirepContract.hashProcessAttestationsProof(
-                outputBlindedUserState,
-                outputBlindedHashChain,
-                inputBlindedUserState,
-                formatProofForVerifierContract(results.processAttestationProofs[i].proof),
-            )
-            const proofIndex = await unirepContract.getProofIndex(proofNullifier)
-            proofIndexes.push(BigInt(proofIndex))
-        }
-
-        isValid = await verifyProof('userStateTransition', results.finalTransitionProof.proof, results.finalTransitionProof.publicSignals)
-        expect(isValid, 'Verify user state transition circuit off-chain failed').to.be.true
-
-        const newGSTLeaf = results.finalTransitionProof.newGlobalStateTreeLeaf
-        const outputEpkNullifiers = results.finalTransitionProof.epochKeyNullifiers
-        const blindedUserStates = results.finalTransitionProof.blindedUserStates
-        const blindedHashChains = results.finalTransitionProof.blindedHashChains
-        const fromEpoch = results.finalTransitionProof.transitionedFromEpoch
-        // const GSTreeRoot = results.finalTransitionProof.fromGSTRoot
-        const epochTreeRoot = results.finalTransitionProof.fromEpochTree
-
-        // Verify userStateTransition proof on-chain
-        isProofValid = await unirepContract.verifyUserStateTransition(
-            newGSTLeaf,
-            outputEpkNullifiers,
-            fromEpoch,
-            blindedUserStates,
-            GSTreeRoot,
-            blindedHashChains,
-            epochTreeRoot,
-            formatProofForVerifierContract(results.finalTransitionProof.proof),
-        )
-        expect(isProofValid, 'Verify user state transition circuit on-chain failed').to.be.true
-
-        let transitionProof = [
-            newGSTLeaf,
-            outputEpkNullifiers,
-            fromEpoch,
-            blindedUserStates,
-            GSTreeRoot,
-            blindedHashChains,
-            epochTreeRoot,
-            formatProofForVerifierContract(results.finalTransitionProof.proof),
-        ]
-        tx = await unirepContract.updateUserStateRoot(
-            transitionProof,
-            proofIndexes,
-        )
-        receipt = await tx.wait()
-        expect(receipt.status, 'Submit user state transition proof failed').to.equal(1)
-        console.log("Gas cost of submit a user state transition proof:", receipt.gasUsed.toString())
-        numLeaf ++
-
-        const newState = await userState.genNewUserStateAfterTransition()
-        const epkNullifiers = userState.getEpochKeyNullifiers(1)
-        const epoch_ = await unirepContract.currentEpoch()
-        expect(newGSTLeaf, 'Computed new GST leaf should match').to.equal(newState.newGSTLeaf.toString())
-        userState.transition(newState.newUSTLeaves)
-        unirepState.userStateTransition(epoch_, BigInt(newGSTLeaf), epkNullifiers)
+        it('user signs up through a signed up attester with 0 airdrop should not get airdrop', async() => {
+            console.log('User sign up')
+            const userId = genIdentity()
+            const userCommitment = genIdentityCommitment(userId)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[1])
+            let tx = await unirepContractCalledByAttester.userSignUp(userCommitment)
+            let receipt = await tx.wait()
+            expect(receipt.status).equal(1)
+    
+            const signUpFilter = unirepContract.filters.UserSignedUp()
+            const signUpEvents =  await unirepContract.queryFilter(signUpFilter)
+            const commitment_ = signUpEvents[numUsers].args._identityCommitment
+            expect(commitment_).equal(userCommitment)
+            numUsers ++
+            
+            // user can prove airdrop pos rep
+            const currentEpoch = (await unirepContract.currentEpoch()).toNumber()
+            const reputationRecords = {}
+            let attesterId_
+            for (const event of signUpEvents) {
+                attesterId_ = event.args._attesterId.toNumber()
+                reputationRecords[attesterId_] = new Reputation(
+                    BigInt(event.args._airdropAmount),
+                    BigInt(0),
+                    BigInt(0),
+                    BigInt(0) // airdrop amount == 0
+                )
+            }
+            const minPosRep = 19
+            const circuitInputs = await genReputationCircuitInput(userId, currentEpoch, epkNonce, reputationRecords, attesterId_, undefined, undefined, undefined, minPosRep)
+            const isValid = await genProofAndVerify(Circuit.proveReputation, circuitInputs)
+            expect(isValid, 'Verify reputation proof off-chain failed').to.be.false
+        })
+    
+        it('user signs up through a non-signed up attester should succeed and gets no airdrop', async() => {
+            console.log('User sign up')
+            const userId = genIdentity()
+            const userCommitment = genIdentityCommitment(userId)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[2])
+            let tx = await unirepContractCalledByAttester.userSignUp(userCommitment)
+            let receipt = await tx.wait()
+            expect(receipt.status).equal(1)
+    
+            const signUpFilter = unirepContract.filters.UserSignedUp()
+            const signUpEvents =  await unirepContract.queryFilter(signUpFilter)
+            const commitment_ = signUpEvents[numUsers].args._identityCommitment
+            expect(commitment_).equal(userCommitment)
+            numUsers ++
+        })
     })
 
-    it('User can prove that he has at least twice airdrop positive reputation', async() => {
-        // generate reputation proof should success
-        const proveGraffiti = 0
-        const minPosRep = 30, graffitiPreImage = 0
-        const results = await userState.genProveReputationProof(BigInt(attesterId), repNullifiersAmount, epkNonce, minPosRep, proveGraffiti, graffitiPreImage)
-        const isValid = await verifyProof('proveReputation', results.proof, results.publicSignals)
-        expect(isValid, 'Verify reputation proof off-chain failed').to.be.true
-    })
-
-    it('user signs up through a signed up attester with 0 airdrop should not get airdrop', async() => {
+    describe('Users get airdrop', () => {
         console.log('User sign up')
         const userId = genIdentity()
         const userCommitment = genIdentityCommitment(userId)
-        let tx = await unirepContractCalledByAttester2.userSignUp(userCommitment)
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
+        let currentEpoch
+        let reputationRecords = {}
+        let attesterId_
 
-        const newGSTLeafInsertedFilter = unirepContract.filters.NewGSTLeafInserted()
-        const newGSTLeafInsertedEvents =  await unirepContract.queryFilter(newGSTLeafInsertedFilter)
-        const newGSTLeaf = newGSTLeafInsertedEvents[numLeaf].args._hashedLeaf
-        numLeaf ++
+        it('user signs up through attester should get airdrop pos rep', async() => {
+            let tx = await unirepContract.userSignUp(userCommitment)
+            let receipt = await tx.wait()
+            expect(receipt.status).equal(1)
+            const signUpFilter = unirepContract.filters.UserSignedUp()
+            const signUpEvents =  await unirepContract.queryFilter(signUpFilter)
+            const commitment_ = signUpEvents[numUsers].args._identityCommitment
+            expect(commitment_).equal(userCommitment)
+            numUsers ++
+    
+            currentEpoch = (await unirepContract.currentEpoch()).toNumber()
+            reputationRecords = {}
+            for (const event of signUpEvents) {
+                attesterId_ = event.args._attesterId.toNumber()
+                reputationRecords[attesterId_] = new Reputation(
+                    BigInt(event.args._airdropAmount),
+                    BigInt(0),
+                    BigInt(0),
+                    BigInt(1) // airdrop amount != 0
+                )
+            }
+        })
 
-        // expected airdropped user state
-        const defaultLeafHash = hash5([])
-        const tree = await genNewSMT(circuitUserStateTreeDepth, defaultLeafHash)
-        const SMTRoot = await tree.getRootHash()
-        const hashedLeaf = hashLeftRight(userCommitment, SMTRoot)
-        expect(newGSTLeaf).equal(hashedLeaf)
+        it('user can prove airdrop pos rep',async () => {
+            const minPosRep = 19
+            const repProofCircuitInputs = await genReputationCircuitInput(userId, currentEpoch, epkNonce,  reputationRecords, attesterId_, undefined, undefined, undefined, minPosRep)
+            const isRepProofValid = await genProofAndVerify(Circuit.proveReputation, repProofCircuitInputs)
+            expect(isRepProofValid, 'Verify reputation proof off-chain failed').to.be.true
+        })
 
-        // prove reputation should fail
-        const currentEpoch = await unirepContract.currentEpoch()
-        unirepState.signUp(currentEpoch.toNumber(), BigInt(newGSTLeaf))
-        userState = new UserState(
-            unirepState,
-            userId,
-            userCommitment,
-            false,
-        )
-        const latestTransitionedToEpoch = currentEpoch.toNumber()
-        const GSTreeLeafIndex = 0
-        const airdropAmount = 0
-        userState.signUp(latestTransitionedToEpoch, GSTreeLeafIndex, attester2Id, airdropAmount)
-        const proveGraffiti = 0
-        const minPosRep = 19, graffitiPreImage = 0
-        const results = await userState.genProveReputationProof(BigInt(attesterId), repNullifiersAmount, epkNonce, minPosRep, proveGraffiti, graffitiPreImage)
-        const isValid = await verifyProof('proveReputation', results.proof, results.publicSignals)
-        expect(isValid, 'Verify reputation proof off-chain failed').to.be.false
-    })
+        
+        it('user can prove sign up flag',async () => {
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, currentEpoch, reputationRecords, attesterId_)
+            const isSignUpProofValid = await genProofAndVerify(Circuit.proveUserSignUp, signUpCircuitInputs)
+            expect(isSignUpProofValid, 'Verify user sign up proof off-chain failed').to.be.true
+        })
 
-    it('user signs up through a non-signed up attester should succeed and gets no airdrop', async() => {
-        console.log('User sign up')
-        const userId = genIdentity()
-        const userCommitment = genIdentityCommitment(userId)
-        let tx = await unirepContractCalledByAttester2.userSignUp(userCommitment)
-        let receipt = await tx.wait()
-        expect(receipt.status).equal(1)
+        it('user can use sign up proof to get airdrop (from the attester)', async () => {
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, currentEpoch, reputationRecords, attesterId_)
+            const input = await genInputForContract(Circuit.proveUserSignUp, signUpCircuitInputs)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[0])
+            const tx = await unirepContractCalledByAttester.airdropEpochKey(input, { value: attestingFee })
+            const receipt = await tx.wait()
+            expect(receipt.status).equal(1)
 
-        const newGSTLeafInsertedFilter = unirepContract.filters.NewGSTLeafInserted()
-        const newGSTLeafInsertedEvents =  await unirepContract.queryFilter(newGSTLeafInsertedFilter)
-        const newGSTLeaf = newGSTLeafInsertedEvents[numLeaf].args._hashedLeaf
-        numLeaf ++
+            const pfIdx = await unirepContract.getProofIndex(input.hash())
+            expect(Number(pfIdx)).not.eq(0)
 
-        // expected airdropped user state
-        const defaultLeafHash = hash5([])
-        const tree = await genNewSMT(circuitUserStateTreeDepth, defaultLeafHash)
-        const SMTRoot = await tree.getRootHash()
-        const hashedLeaf = hashLeftRight(userCommitment, SMTRoot)
-        expect(newGSTLeaf).equal(hashedLeaf)
+            await expect(unirepContractCalledByAttester.airdropEpochKey(input, {value : attestingFee}))
+                .to.be.revertedWith('Unirep: the proof has been submitted before')
+        })
+
+        it('get airdrop through a non-signup attester should fail',async () => {
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, currentEpoch, reputationRecords, attesterId_)
+            const input = await genInputForContract(Circuit.proveUserSignUp, signUpCircuitInputs)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[2])
+
+            await expect(unirepContractCalledByAttester.airdropEpochKey(input, { value: attestingFee }))
+                .to.be.revertedWith('Unirep: attester has not signed up yet')
+        })
+
+        it('get airdrop through a wrong attester should fail',async () => {
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, currentEpoch, reputationRecords, attesterId_)
+            const input = await genInputForContract(Circuit.proveUserSignUp, signUpCircuitInputs)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[1])
+
+            await expect(unirepContractCalledByAttester.airdropEpochKey(input, { value: attestingFee }))
+                .to.be.revertedWith('Unirep: mismatched attesterId')
+        })
+
+        it('get airdrop through a wrong attester should fail',async () => {
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, currentEpoch, reputationRecords, attesterId_)
+            const input = await genInputForContract(Circuit.proveUserSignUp, signUpCircuitInputs)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[0])
+            const attestingFee_ = await unirepContract.attestingFee()
+            const wrongAttestingFee = attestingFee_.add(2)
+            expect(wrongAttestingFee).not.equal(attestingFee_)
+
+            await expect(unirepContractCalledByAttester.airdropEpochKey(input, { value: wrongAttestingFee }))
+                .to.be.revertedWith('Unirep: no attesting fee or incorrect amount')
+        })
+
+        it('get airdrop through a wrong attester should fail',async () => {
+            const wrongEpoch = currentEpoch + 1
+            const signUpCircuitInputs = await genProveSignUpCircuitInput(userId, wrongEpoch, reputationRecords, attesterId_)
+            const input = await genInputForContract(Circuit.proveUserSignUp, signUpCircuitInputs)
+            unirepContractCalledByAttester = unirepContract.connect(accounts[0])
+            const currentEpoch_ = await unirepContract.currentEpoch()
+            expect(wrongEpoch).not.equal(currentEpoch_)
+
+            await expect(unirepContractCalledByAttester.airdropEpochKey(input, { value: attestingFee }))
+                .to.be.revertedWith('Unirep: submit an airdrop proof with incorrect epoch')
+        })
     })
 })

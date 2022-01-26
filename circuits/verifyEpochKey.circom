@@ -1,3 +1,8 @@
+/*
+    Verify if epoch key is computed correctly
+    epoch_key = hash5(id_nullifier, epoch, nonce);
+*/
+
 include "../node_modules/circomlib/circuits/comparators.circom";
 include "./hasherPoseidon.circom";
 include "./incrementalMerkleTree.circom";

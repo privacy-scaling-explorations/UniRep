@@ -1,3 +1,9 @@
+/*
+    Prove: if user's identity and the user state tree root is one of the global state tree leaf
+    global state tree leaf = hashLeftRight(id_commitment, user_state_tree_root)
+*/
+
+
 include "./hasherPoseidon.circom";
 include "./identityCommitment.circom";
 include "./incrementalMerkleTree.circom";

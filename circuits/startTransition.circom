@@ -1,3 +1,10 @@
+/*
+    Prove: if user starts user state transition from an existed global state tree
+    compute the blinded_user_state = hash5(identity, UST_root, epoch, epoch_key_nonce)
+    compute teh blinded_hash_chain = hash5(identity, hash_chain_result, epoch, epoch_key_nonce)
+    Process attestations proof should start with the blinded_user_state and blinded_hash_chain
+*/
+
 include "../node_modules/circomlib/circuits/comparators.circom";
 include "../node_modules/circomlib/circuits/mux1.circom";
 include "./hasherPoseidon.circom";

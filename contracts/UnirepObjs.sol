@@ -2,9 +2,20 @@
 pragma abicoder v2;
 pragma solidity 0.8.0;
 
-contract UnirepParameters {
-    // This structs help to reduce the number of parameters to the constructor
-    // and avoid a stack overflow error during compilation
+contract UnirepObjs{
+    struct Attestation {
+        // The attester’s ID
+        uint256 attesterId;
+        // Positive reputation
+        uint256 posRep;
+        // Negative reputation
+        uint256 negRep;
+        // A hash of an arbitary string
+        uint256 graffiti;
+        // A flag to indicate if user has signed up in the attester's app
+        uint256 signUp;
+    }
+
     struct TreeDepths {
         uint8 globalStateTreeDepth;
         uint8 userStateTreeDepth;
@@ -23,22 +34,23 @@ contract UnirepParameters {
         bool isValid;
     }
 
-    struct EpochKeyProofRelated{
+    struct EpochKeyProof{
         uint256 globalStateTree;
         uint256 epoch;
         uint256 epochKey;
         uint256[8] proof;
     }
 
-    struct SignUpProofRelated{
+    struct SignUpProof{
         uint256 epoch;
         uint256 epochKey;
         uint256 globalStateTree;
         uint256 attesterId;
+        uint256 userHasSignedUp;
         uint256[8] proof;
     }
 
-    struct UserTransitionedRelated{
+    struct UserTransitionProof{
         uint256 newGlobalStateTreeLeaf;
         uint256[] epkNullifiers;
         uint256 transitionFromEpoch;
@@ -49,7 +61,7 @@ contract UnirepParameters {
         uint256[8] proof;
     }
 
-    struct ReputationProofRelated{
+    struct ReputationProof{
         uint256[] repNullifiers;
         uint256 epoch;
         uint256 epochKey;

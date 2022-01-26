@@ -1,5 +1,11 @@
+import { ethers } from 'ethers'
+import { add0x } from '../crypto'
+
 import { DEFAULT_ETH_PROVIDER } from './defaults'
-import { UnirepContract } from '../core'
+import { Attestation, UnirepContract } from '../core'
+import { verifyEpochKeyProof } from './verifyEpochKeyProof'
+import { epkProofPrefix, epkPublicSignalsPrefix } from './prefix'
+import base64url from 'base64url'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
@@ -34,22 +40,12 @@ const configureSubparser = (subparsers: any) => {
         }
     )
 
-    const privkeyGroup = parser.add_mutually_exclusive_group({ required: true })
-
-    privkeyGroup.add_argument(
-        '-dp', '--prompt-for-eth-privkey',
-        {
-            action: 'store_true',
-            help: 'Whether to prompt for the user\'s Ethereum private key and ignore -d / --eth-privkey',
-        }
-    )
-
-    privkeyGroup.add_argument(
+    parser.add_argument(
         '-d', '--eth-privkey',
         {
             action: 'store',
             type: 'str',
-            help: 'The deployer\'s Ethereum private key',
+            help: 'The attester\'s Ethereum private key',
         }
     )
 }

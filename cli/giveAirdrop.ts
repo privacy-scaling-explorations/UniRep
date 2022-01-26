@@ -1,8 +1,10 @@
+import base64url from 'base64url'
+import { SignUpProof } from '../core'
+import { formatProofForSnarkjsVerification } from '../circuits/utils'
 import { DEFAULT_ETH_PROVIDER } from './defaults'
 import { UnirepContract } from '../core'
 import { verifyUserSignUpProof } from './verifyUserSignUpProof'
 import { signUpProofPrefix, signUpPublicSignalsPrefix } from './prefix'
-import base64url from 'base64url'
 
 const configureSubparser = (subparsers: any) => {
     const parser = subparsers.add_parser(
@@ -46,22 +48,12 @@ const configureSubparser = (subparsers: any) => {
         }
     )
 
-    const privkeyGroup = parser.add_mutually_exclusive_group({ required: true })
-
-    privkeyGroup.add_argument(
-        '-dp', '--prompt-for-eth-privkey',
-        {
-            action: 'store_true',
-            help: 'Whether to prompt for the user\'s Ethereum private key and ignore -d / --eth-privkey',
-        }
-    )
-
-    privkeyGroup.add_argument(
+    parser.add_argument(
         '-d', '--eth-privkey',
         {
             action: 'store',
             type: 'str',
-            help: 'The deployer\'s Ethereum private key',
+            help: 'The attester\'s Ethereum private key',
         }
     )
 }
@@ -81,18 +73,20 @@ const giveAirdrop = async (args: any) => {
     
     // Parse input
     const decodedProof = base64url.decode(args.proof.slice(signUpProofPrefix.length))
+    const proof = JSON.parse(decodedProof)
     const decodedPublicSignals = base64url.decode(args.public_signals.slice(signUpPublicSignalsPrefix.length))
     const publicSignals = JSON.parse(decodedPublicSignals)
-    const epoch = publicSignals[0]
-    const epk = publicSignals[1]
-    const GSTRoot = publicSignals[2]
-    const attesterId = publicSignals[3]
-    const proof = JSON.parse(decodedProof)
-    console.log(`Airdrop to epoch key ${epk} in attester ID ${attesterId}`)
+    const userSignUpProof = new SignUpProof(
+        publicSignals,
+        formatProofForSnarkjsVerification(proof)
+    )
+    
+    console.log(`Airdrop to epoch key ${userSignUpProof.epochKey} in attester ID ${userSignUpProof.attesterId}`)
 
     // Submit attestation
-    const tx = await unirepContract.airdropEpochKey(epoch, epk, GSTRoot, attesterId, proof)
-    const proofIndex = await unirepContract.getSignUpProofIndex([epoch, epk, GSTRoot, attesterId, proof])
+    const tx = await unirepContract.airdropEpochKey(userSignUpProof)
+    await tx.wait()
+    const proofIndex = await unirepContract.getSignUpProofIndex(userSignUpProof)
     if(tx != undefined){
         console.log('Transaction hash:', tx?.hash)
         console.log('Proof index:', proofIndex.toNumber())

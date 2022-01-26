@@ -1,22 +1,21 @@
-import * as fs from 'fs'
 import * as path from 'path'
-const circom = require('circom')
 const snarkjs = require('snarkjs')
+import { SnarkProof, SnarkPublicSignals } from '../crypto'
+import verifyEpochKeyVkey from '../build/verifyEpochKey.vkey.json'
+import proveReputationVkey from '../build/proveReputation.vkey.json'
+import proveUserSignUpVkey from '../build/proveUserSignUp.vkey.json'
+import startTransitionVkey from '../build/startTransition.vkey.json'
+import processAttestationsVkey from '../build/processAttestations.vkey.json'
+import userStateTransitionVkey from '../build/userStateTransition.vkey.json'
 
 const buildPath = "../build"
-
-/*
- * @param circuitPath The subpath to the circuit file (e.g.
- *     test/userStateTransition_test.circom)
- */
-const compileAndLoadCircuit = async (
-    circuitPath: string
-) => {
-    const circuit = await circom.tester(circuitPath)
-
-    await circuit.loadSymbols()
-
-    return circuit
+enum Circuit {
+    verifyEpochKey = 'verifyEpochKey',
+    proveReputation = 'proveReputation',
+    proveUserSignUp = 'proveUserSignUp',
+    startTransition = 'startTransition',
+    processAttestations = 'processAttestations',
+    userStateTransition = 'userStateTransition',
 }
 
 const executeCircuit = async (
@@ -31,11 +30,25 @@ const executeCircuit = async (
     return witness
 }
 
-const getVKey = (
-    circuitName: string
+const getVKey = async (
+    circuitName: Circuit
 ) => {
-    const vkeyJsonPath = path.join(__dirname, buildPath,`${circuitName}.vkey.json`)
-    return JSON.parse(fs.readFileSync(vkeyJsonPath).toString());
+    if (circuitName == Circuit.verifyEpochKey){
+        return verifyEpochKeyVkey
+    } else if (circuitName == Circuit.proveReputation){
+        return proveReputationVkey
+    } else if (circuitName == Circuit.proveUserSignUp){
+        return proveUserSignUpVkey
+    } else if (circuitName == Circuit.startTransition){
+        return startTransitionVkey
+    } else if (circuitName == Circuit.processAttestations){
+        return processAttestationsVkey
+    } else if (circuitName == Circuit.userStateTransition){
+        return userStateTransitionVkey
+    } else {
+        console.log(`"${circuitName}" not found. Valid circuit name: verifyEpochKey, proveReputation, proveUserSignUp, startTransition, processAttestations, userStateTransition`)
+        return
+    }
 }
 
 const getSignalByName = (
@@ -48,7 +61,7 @@ const getSignalByName = (
 }
 
 const genProofAndPublicSignals = async (
-    circuitName: string,
+    circuitName: Circuit,
     inputs: any,
 ) => {
     const circuitWasmPath = path.join(__dirname, buildPath, `${circuitName}.wasm`)
@@ -59,20 +72,18 @@ const genProofAndPublicSignals = async (
 }
 
 const verifyProof = async (
-    circuitName: string,
-    proof: any,
-    publicSignals: any,
+    circuitName: Circuit,
+    proof: SnarkProof,
+    publicSignals: SnarkPublicSignals,
 ): Promise<boolean> => {
-    const vkeyJsonPath = path.join(__dirname, buildPath,`${circuitName}.vkey.json`)
-    const vKey = JSON.parse(fs.readFileSync(vkeyJsonPath).toString());
-    const res = await snarkjs.groth16.verify(vKey, publicSignals, proof);
-
+    const vkey = await getVKey(circuitName)
+    const res = await snarkjs.groth16.verify(vkey, publicSignals, proof);
     return res
 }
 
 const formatProofForVerifierContract = (
-    _proof: any,
-) => {
+    _proof: SnarkProof,
+): string[] => {
 
     return ([
         _proof.pi_a[0],
@@ -86,10 +97,40 @@ const formatProofForVerifierContract = (
     ]).map((x) => x.toString())
 }
 
+const formatProofForSnarkjsVerification = (
+    _proof: string[]
+): SnarkProof => {
+    return {
+        pi_a: [
+            BigInt(_proof[0]),
+            BigInt(_proof[1]),
+            BigInt('1')
+        ],
+        pi_b: [
+          [
+            BigInt(_proof[3]),
+            BigInt(_proof[2])
+          ],
+          [
+            BigInt(_proof[5]),
+            BigInt(_proof[4])
+          ],
+          [ BigInt('1'), 
+            BigInt('0') ]
+        ],
+        pi_c: [
+            BigInt(_proof[6]),
+            BigInt(_proof[7]),
+            BigInt('1')
+        ],
+      }
+}
+
 export {
-    compileAndLoadCircuit,
+    Circuit,
     executeCircuit,
     formatProofForVerifierContract,
+    formatProofForSnarkjsVerification,
     getVKey,
     getSignalByName,
     genProofAndPublicSignals,

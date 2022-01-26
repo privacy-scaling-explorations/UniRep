@@ -1,3 +1,11 @@
+/*
+    Prove: the processed attestations matches blinded_user_state and blinded_hash_chain
+    compute the blinded_user_state = hash5(identity, UST_root, epoch, epoch_key_nonce)
+    compute teh blinded_hash_chain = hash5(identity, hash_chain_result, epoch, epoch_key_nonce)
+    Process attestations proof should start with an existed blinded_user_state
+    and output another blinded_hash_chain and blinded_user_state
+*/
+
 include "../node_modules/circomlib/circuits/comparators.circom";
 include "../node_modules/circomlib/circuits/mux1.circom";
 include "../node_modules/circomlib/circuits/gates.circom";

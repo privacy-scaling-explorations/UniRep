@@ -1,25 +1,27 @@
-import base64url from 'base64url'
+// @ts-ignore
 import { ethers as hardhatEthers } from 'hardhat'
+import base64url from 'base64url'
 import { ethers } from 'ethers'
-import { expect } from "chai"
-
+import chai from "chai"
+const { expect } = chai
 import { genIdentityCommitment, unSerialiseIdentity, hashOne } from '../../crypto'
+import { getUnirepContract } from '../../core'
+
 import { DEFAULT_ETH_PROVIDER } from '../../cli/defaults'
-import { genUnirepStateFromContract, UnirepState, getUnirepContract } from '../../core'
+import { genUnirepStateFromContract, UnirepState } from '../../core'
 import { identityCommitmentPrefix, identityPrefix } from '../prefix'
 import { exec } from './utils'
 
 describe('test all CLI subcommands', function() {
     this.timeout(500000)
 
-    let deployerPrivKey
+    let deployerPrivKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     let deployerAddr
-    let attesterPrivKey
+    let attesterPrivKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     let attesterAddr
-    let userPrivKey
+    let userPrivKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     let userAddr
     
-    const startBlock = 0
     const attestingFee = ethers.BigNumber.from(10).pow(18)
     const epochKeyNonce = 0
     const epochLength = 5
@@ -30,8 +32,9 @@ describe('test all CLI subcommands', function() {
     const attesterId = 1
     let epk, epkProof, epkPublicSignals, proofIdx
     const airdropPosRep = 30
-    const posRep = 10, negRep = 4, graffitiPreimage = 0, graffiti = hashOne(BigInt(graffitiPreimage)), signUpFlag = 1
-    const minPosRep = 5, maxNegRep = 10
+    const posRep = 5, negRep = 4, graffitiPreimage = 0, graffiti = hashOne(BigInt(graffitiPreimage)), signUpFlag = 1
+    const minPosRep = 0, maxNegRep = 10
+    const repNullifierAmount = 1
     let userRepProof, signUpProof
     let repPublicSignals, signUpPublicSignals
 
@@ -53,7 +56,7 @@ describe('test all CLI subcommands', function() {
     describe('deploy CLI subcommand', () => {
         it('should deploy a Unirep contract', async () => {
             const command = `npx ts-node cli/index.ts deploy` +
-                ` -d ${deployerPrivKey} ` + 
+                ` -d ${deployerPrivKey} ` +
                 ` -l ${epochLength} ` +
                 ` -f ${attestingFee.toString()} `
 
@@ -70,11 +73,10 @@ describe('test all CLI subcommands', function() {
             unirepState = await genUnirepStateFromContract(
                 provider,
                 unirepAddress,
-                startBlock,
             )
 
-            expect(unirepState.epochLength).equal(epochLength)
-            expect(unirepState.attestingFee).equal(attestingFee)
+            expect(unirepState.setting.epochLength).equal(epochLength)
+            expect(unirepState.setting.attestingFee).equal(attestingFee)
         })
     })
 
@@ -266,7 +268,8 @@ describe('test all CLI subcommands', function() {
                 ` -id ${userIdentity} ` +
                 ` -a ${attesterId} ` +
                 ` -mr ${minPosRep} ` +
-                ` -n ${epochKeyNonce}`
+                ` -n ${epochKeyNonce}` +
+                ` -r ${repNullifierAmount}`
                 // ` -mn ${maxNegRep} ` +
                 // ` -gp ${graffitiPreimage} `
 

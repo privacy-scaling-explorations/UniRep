@@ -1,10 +1,10 @@
 import base64url from 'base64url'
 import { ethers } from 'ethers'
+import { unSerialiseIdentity } from '../crypto'
+import { Circuit, formatProofForVerifierContract, verifyProof } from '../circuits/utils'
 
-import { genIdentityCommitment, unSerialiseIdentity } from '../crypto'
-import { formatProofForVerifierContract, verifyProof } from '../circuits/utils'
-import { DEFAULT_ETH_PROVIDER, DEFAULT_START_BLOCK } from './defaults'
-import { genUserStateFromContract, genEpochKey, UnirepContract } from '../core'
+import { DEFAULT_ETH_PROVIDER, DEFAULT_MAX_EPOCH_KEY_NONCE } from './defaults'
+import { genUserStateFromContract, genEpochKey, circuitEpochTreeDepth} from '../core'
 import { epkProofPrefix, epkPublicSignalsPrefix, identityPrefix } from './prefix'
 
 const configureSubparser = (subparsers: any) => {
@@ -41,15 +41,6 @@ const configureSubparser = (subparsers: any) => {
     )
 
     parser.add_argument(
-        '-b', '--start-block',
-        {
-            action: 'store',
-            type: 'int',
-            help: 'The block the Unirep contract is deployed. Default: 0',
-        }
-    )
-
-    parser.add_argument(
         '-x', '--contract',
         {
             required: true,
@@ -64,14 +55,9 @@ const genEpochKeyAndProof = async (args: any) => {
     const ethProvider = args.eth_provider ? args.eth_provider : DEFAULT_ETH_PROVIDER
     const provider = new ethers.providers.JsonRpcProvider(ethProvider)
 
-    // Unirep contract
-    const unirepContract = new UnirepContract(args.contract, ethProvider)
-    
-    const startBlock = (args.start_block) ? args.start_block : DEFAULT_START_BLOCK
-
     // Validate epoch key nonce
     const epkNonce = args.epoch_key_nonce
-    const numEpochKeyNoncePerEpoch = await unirepContract.numEpochKeyNoncePerEpoch()
+    const numEpochKeyNoncePerEpoch = DEFAULT_MAX_EPOCH_KEY_NONCE
     if (epkNonce >= numEpochKeyNoncePerEpoch) {
         console.error('Error: epoch key nonce must be less than max epoch key nonce')
         return
@@ -81,24 +67,20 @@ const genEpochKeyAndProof = async (args: any) => {
     const encodedIdentity = args.identity.slice(identityPrefix.length)
     const decodedIdentity = base64url.decode(encodedIdentity)
     const id = unSerialiseIdentity(decodedIdentity)
-    const commitment = genIdentityCommitment(id)
-    const currentEpoch = await unirepContract.currentEpoch()
-    const treeDepths = await unirepContract.treeDepths()
-    const epochTreeDepth = treeDepths.epochTreeDepth
-    const epk = genEpochKey(id.identityNullifier, currentEpoch, epkNonce, epochTreeDepth).toString()
+    const epochTreeDepth = circuitEpochTreeDepth
 
-    // Gen epoch key proof
+    // Gen User State
     const userState = await genUserStateFromContract(
         provider,
         args.contract,
-        startBlock,
         id,
-        commitment,
     )
     const results = await userState.genVerifyEpochKeyProof(epkNonce)
+    const currentEpoch = userState.getUnirepStateCurrentEpoch()
+    const epk = genEpochKey(id.identityNullifier, currentEpoch, epkNonce, epochTreeDepth).toString()
 
     // TODO: Not sure if this validation is necessary
-    const isValid = await verifyProof('verifyEpochKey', results.proof, results.publicSignals)
+    const isValid = await verifyProof(Circuit.verifyEpochKey, results.proof, results.publicSignals)
     if(!isValid) {
         console.error('Error: epoch key proof generated is not valid!')
         return
@@ -110,7 +92,6 @@ const genEpochKeyAndProof = async (args: any) => {
     console.log(`Epoch key of epoch ${currentEpoch} and nonce ${epkNonce}: ${epk}`)
     console.log(epkProofPrefix + encodedProof)
     console.log(epkPublicSignalsPrefix + encodedPublicSignals)
-    process.exit(0)
 }
 
 export {
