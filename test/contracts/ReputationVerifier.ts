@@ -30,7 +30,6 @@ describe('Verify reputation verifier', function () {
 
     const GSTree = new IncrementalQuinTree(circuitGlobalStateTreeDepth, GSTZERO_VALUE, 2)
     let userStateTree
-    const leafIndex = 0
 
     before(async () => {
         accounts = await hardhatEthers.getSigners()
@@ -62,7 +61,7 @@ describe('Verify reputation verifier', function () {
 
     it('successfully prove a random generated reputation', async () => {
         const attesterIds = Object.keys(reputationRecords)
-        attesterId = attesterIds[Math.floor(Math.random() * NUM_ATTESTERS)]
+        attesterId = attesterIds[Math.floor(Math.random() * attesterIds.length)]
         const circuitInputs = await genReputationCircuitInput(user, epoch, nonce, reputationRecords, attesterId, )
 
         const input: ReputationProof = await genInputForContract(Circuit.proveReputation, circuitInputs)
