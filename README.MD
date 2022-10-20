@@ -1,3 +1,7 @@
+# ⚠️ [Deprecated]
+
+Please refer to [Unirep/Unirep](https://github.com/unirep/unirep) for the latest developments
+
 # Unirep
 UniRep is a private and nonrepudiable repuation system. Users can receive positive and negative reputation from attesters, and voluntarily prove that they have at least certain amount of reputation without revealing the exact amount. Moreover, users cannot refuse to receive reputation from an attester.
 
